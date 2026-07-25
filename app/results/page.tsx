@@ -61,7 +61,9 @@ function ResultsContent() {
         setClassifications(d.classifications || [])
         setScores(d.scores || {})
 
-        const ids: string[] = JSON.parse(d.run.comparisonPaperIds || '[]')
+        const ids: string[] = Array.isArray(d.run.comparisonPaperIds)
+          ? d.run.comparisonPaperIds
+          : JSON.parse(d.run.comparisonPaperIds || '[]')
         const pr = await fetch('/api/papers').then(r => r.json())
         if (pr.success) setComparisonPapers(pr.papers.filter((p: Paper) => ids.includes(p.id)))
       })
