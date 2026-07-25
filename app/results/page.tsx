@@ -89,6 +89,23 @@ function ResultsContent() {
     }
   }
 
+  async function handleDownloadReason() {
+    try {
+      const res = await fetch(`/api/analyze/reason/${runId}`)
+      if (!res.ok) { toast.error('Reason log not found'); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `reason-${runId}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Reason log downloaded')
+    } catch {
+      toast.error('Download failed')
+    }
+  }
+
   function getLabel(qId: string, pId: string): 'A' | 'B' | 'C' | null {
     return classifications.find(c => c.baseQuestionId === qId && c.comparedPaperId === pId)?.label ?? null
   }
@@ -129,17 +146,28 @@ function ResultsContent() {
             </p>
           </div>
         </div>
-        <button
-          onClick={handleExport}
-          disabled={exporting}
-          style={{
-            padding: '10px 20px', borderRadius: 12, border: 'none', cursor: 'pointer',
-            fontWeight: 700, fontSize: 14, background: neo.accent, color: '#fff', boxShadow: neo.btn,
-            opacity: exporting ? 0.7 : 1,
-          }}
-        >
-          {exporting ? 'Exporting…' : '⬇ Export Excel (MSPA)'}
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={handleDownloadReason}
+            style={{
+              padding: '10px 18px', borderRadius: 12, border: 'none', cursor: 'pointer',
+              fontWeight: 700, fontSize: 14, background: neo.bg, color: neo.accent, boxShadow: neo.btn,
+            }}
+          >
+            📄 Reason Log
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            style={{
+              padding: '10px 20px', borderRadius: 12, border: 'none', cursor: 'pointer',
+              fontWeight: 700, fontSize: 14, background: neo.accent, color: '#fff', boxShadow: neo.btn,
+              opacity: exporting ? 0.7 : 1,
+            }}
+          >
+            {exporting ? 'Exporting…' : '⬇ Export Excel (MSPA)'}
+          </button>
+        </div>
       </div>
 
       {/* Score summary cards */}

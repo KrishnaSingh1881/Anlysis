@@ -52,14 +52,14 @@ Group C verbs (design/create/justify): Design, Construct, Justify
 If BASE QUESTION verb and the matching PAST PAPER verb are in the SAME group → answer is A.
 If they are in DIFFERENT groups, OR the past paper only covers PART of the base question's topic → answer is B.
 
-OUTPUT exactly two lines, nothing else:
+OUTPUT exactly one line, nothing else:
 ANSWER: [A/B/C]
 REASON: [one sentence, referencing which step decided it]
 
 ---
 EXAMPLE 1 (for reference — do not include in your answer):
 BASE QUESTION: "3.a) Explain normalization with 1NF, 2NF and 3NF with example"
-PAST PAPER BLOCK: "3.e) Explain 1NF and 2NF with suitable example\n3.f) Given a relation... determine if in 2NF"
+PAST PAPER BLOCK: "3.e) Explain 1NF and 2NF with suitable example / 3.f) Given a relation... determine if in 2NF"
 ANSWER: A
 REASON: Step 3 — topic (normalization) appears via 3.e, verb \"Explain\" matches Group A in both, so treated as full match even though 3NF isn't separately covered and it's a different sub-letter.
 
@@ -71,7 +71,7 @@ REASON: Step 1 — both questions require interpreting an ER diagram to judge eq
 
 EXAMPLE 3 (for reference — do not include in your answer):
 BASE QUESTION: "4.b) Differentiate between various NoSQL database types in terms of data model, applications, performance, scalability, and examples"
-PAST PAPER BLOCK: "4.b) Compare SQL with NoSQL\n4.c) Explain CRUD operations with syntax"
+PAST PAPER BLOCK: "4.b) Compare SQL with NoSQL / 4.c) Explain CRUD operations with syntax"
 ANSWER: C
 REASON: Step 2 — base question is about comparing NoSQL TYPES to each other, past paper only compares SQL vs NoSQL as a category, which is a different topic, not found in the block.
 ---
@@ -270,7 +270,7 @@ export async function classifyQuestion(
     .replace('{pastPaperUnitBlock}', pastPaperUnitBlock)
 
   const response = await callOllama(prompt, '', DEFAULT_MODEL, 0.15, {
-    num_predict: 120,
+    num_predict: 200,
     num_ctx: 4096,
   })
 

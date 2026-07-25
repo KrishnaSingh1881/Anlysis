@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 import { classifyQuestion, sleep } from '@/lib/ollama'
+import fs from 'fs'
+import path from 'path'
 
 export async function POST(request: NextRequest) {
   console.log('[API /analyze] POST — starting analysis run')
@@ -60,6 +62,16 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
   console.log(`\n[Analysis] ===== START runId=${runId} =====`)
   const db = getDb()
 
+  // reason.txt — one file per run, written incrementally so you can tail -f it
+  const reasonFilePath = path.join(process.cwd(), 'data', `reason-${runId}.txt`)
+  const dataDir = path.join(process.cwd(), 'data')
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
+  fs.writeFileSync(reasonFilePath, `=== ANALYSIS RUN: ${runId} ===\nStarted: ${new Date().toISOString()}\n\n`)
+
+  function appendReason(lines: string) {
+    fs.appendFileSync(reasonFilePath, lines + '\n')
+  }
+
   db.prepare("UPDATE analysis_runs SET status = 'classifying' WHERE id = ?").run(runId)
   console.log(`[Analysis] Status → classifying`)
 
@@ -76,8 +88,16 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
 
   // Pre-build unit→block string maps for every comparison paper
   const compPaperUnitMaps = new Map<string, Map<string, string>>()
+  // Also keep paper names for reason.txt readability
+  const paperNameMap = new Map<string, string>()
   for (const paperId of comparisonPaperIds) {
     const pastQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(paperId) as any[]
+    const paperRow = db.prepare('SELECT filename, academicYear, semester FROM papers WHERE id = ?').get(paperId) as any
+    const paperLabel = paperRow?.academicYear
+      ? `${paperRow.academicYear} SEM-${paperRow.semester}`
+      : (paperRow?.filename ?? paperId.slice(0, 8))
+    paperNameMap.set(paperId, paperLabel)
+
     console.log(`[Analysis] Loaded comparison paper paperId=${paperId}: ${pastQuestions.length} questions`)
     const unitMap = new Map<string, string>()
     for (const pq of pastQuestions) {
@@ -104,6 +124,7 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
     }
 
     console.log(`\n[Analysis] === Starting Unit Q${unit} (${unitBaseQuestions.length} sub-questions) ===`)
+    appendReason(`\n--- UNIT ${unit} (${unitBaseQuestions.length} base sub-questions) ---`)
 
     // ── MIDDLE LOOP: sub-question within unit ───────────────────────────────
     for (const bq of unitBaseQuestions) {
@@ -115,6 +136,7 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
 
         const unitMap = compPaperUnitMaps.get(paperId)!
         const unitBlock = unitMap.get(unit) ?? '[No questions found for this unit in this comparison paper]'
+        const paperLabel = paperNameMap.get(paperId) ?? paperId.slice(0, 8)
 
         console.log(`[Analysis] Step ${globalStep} — qno=${bq.qno} vs paperId=${paperId}`)
         console.log(`[Analysis]   base (60c): "${bq.text.slice(0, 60)}"`)
@@ -131,7 +153,19 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(classId, bq.id, paperId, result.answer, result.confidence, result.reasoning, new Date().toISOString())
 
-        subResults.push(`${paperId.slice(0, 8)}:${result.answer}(step${result.resolvedAtStep})`)
+        subResults.push(`${paperLabel}:${result.answer}(step${result.resolvedAtStep})`)
+
+        // Append detailed block to reason.txt
+        appendReason(
+          `\n[Step ${globalStep}] BASE: ${bq.qno}) ${bq.text}` +
+          `\n         COMPARED WITH: ${paperLabel}` +
+          `\n         PAST BLOCK:\n${unitBlock.split('\n').map(l => '           ' + l).join('\n')}` +
+          `\n         ANSWER: ${result.answer}` +
+          `\n         REASON: ${result.reasoning}` +
+          `\n         STEP_RESOLVED: ${result.resolvedAtStep}` +
+          `\n         ${'─'.repeat(80)}`
+        )
+
         await sleep(200)
       }
 
@@ -145,7 +179,9 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
 
   db.prepare("UPDATE analysis_runs SET status = 'complete', completedAt = ? WHERE id = ?")
     .run(new Date().toISOString(), runId)
+  appendReason(`\n=== COMPLETE: ${globalStep} total steps | ${new Date().toISOString()} ===\n`)
   console.log(`[Analysis] ===== COMPLETE runId=${runId} totalSteps=${globalStep} =====\n`)
+  console.log(`[Analysis] Reason log written to: ${reasonFilePath}`)
 }
 
 export async function GET() {
