@@ -13,6 +13,17 @@ const ABC_FONT_COLORS: Record<string, string> = {
   C: 'FF9B2C2C',
 }
 
+function getColLetter(colIndex: number): string {
+  let temp = colIndex
+  let letter = ''
+  while (temp > 0) {
+    const mod = (temp - 1) % 26
+    letter = String.fromCharCode(65 + mod) + letter
+    temp = Math.floor((temp - mod) / 26)
+  }
+  return letter
+}
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params
   console.log(`[API /export/${runId}] GET — generating Excel MSPA report`)
@@ -83,6 +94,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     })
     ws.getRow(2).height = 20
 
+    const firstQRow = 3
+    const lastQRow = baseQuestions.length > 0 ? firstQRow + baseQuestions.length - 1 : firstQRow
+
     // Rows 3–N: Questions with A/B/C cells
     let rowNum = 3
     for (const q of baseQuestions) {
@@ -101,7 +115,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           cell.fill = ABC_FILLS[c.label]
           cell.font = { bold: true, color: { argb: ABC_FONT_COLORS[c.label] } }
           cell.alignment = { horizontal: 'center', vertical: 'middle' }
-          console.log(`[API /export/${runId}] Row ${rowNum} col ${i + 2}: qno=${q.qno} paper=${paper.academicYear || paper.filename} label=${c.label}`)
         } else {
           cell.value = '—'
           cell.alignment = { horizontal: 'center', vertical: 'middle' }
@@ -113,64 +126,87 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     rowNum++ // blank separator
 
+    const rowNumA = rowNum
+    const rowNumB = rowNum + 1
+    const rowNumC = rowNum + 2
+    const rowNumScore = rowNum + 3
+
+    const firstCol = getColLetter(2)
+    const lastCol = getColLetter(comparisonPapers.length + 1)
+    const avgCol = getColLetter(comparisonPapers.length + 2)
+
     // Count rows — A, B, C
     const countLabels: Array<'A' | 'B' | 'C'> = ['A', 'B', 'C']
+    const labelRowNums: Record<'A' | 'B' | 'C', number> = { A: rowNumA, B: rowNumB, C: rowNumC }
+
     for (const label of countLabels) {
-      const row = ws.getRow(rowNum)
+      const currentRowNum = labelRowNums[label]
+      const row = ws.getRow(currentRowNum)
       row.getCell(1).value = `Count of Type ${label} Questions`
       row.getCell(1).font = { bold: true }
 
       let labelTotal = 0
       comparisonPapers.forEach((paper, i) => {
+        const colLetter = getColLetter(i + 2)
         const count = classifications.filter(
           c => c.comparedPaperId === paper.id && c.label === label
         ).length
         labelTotal += count
         const cell = row.getCell(i + 2)
-        cell.value = count
+        cell.value = {
+          formula: `COUNTIF(${colLetter}${firstQRow}:${colLetter}${lastQRow}, "${label}")`,
+          result: count,
+        }
         cell.fill = ABC_FILLS[label]
         cell.font = { bold: true, color: { argb: ABC_FONT_COLORS[label] } }
         cell.alignment = { horizontal: 'center' }
       })
+
       const avg = comparisonPapers.length > 0 ? Math.round((labelTotal / comparisonPapers.length) * 10) / 10 : 0
       const avgCell = row.getCell(comparisonPapers.length + 2)
-      avgCell.value = avg
+      avgCell.value = comparisonPapers.length > 0
+        ? { formula: `AVERAGE(${firstCol}${currentRowNum}:${lastCol}${currentRowNum})`, result: avg }
+        : 0
       avgCell.alignment = { horizontal: 'center' }
       avgCell.font = { bold: true }
-      console.log(`[API /export/${runId}] Count row ${label}: total=${labelTotal} avg=${avg}`)
-      rowNum++
     }
 
+    rowNum = rowNumC + 1
+
     // Predictability score row
-    const scoreRow = ws.getRow(rowNum)
+    const scoreRow = ws.getRow(rowNumScore)
     scoreRow.getCell(1).value = 'Predictability Score (%)'
     scoreRow.getCell(1).font = { bold: true }
 
-    let totalScore = 0
+    let totalScoreSum = 0
     comparisonPapers.forEach((paper, i) => {
+      const colLetter = getColLetter(i + 2)
       const pc = classifications.filter(c => c.comparedPaperId === paper.id)
       const A = pc.filter(c => c.label === 'A').length
       const B = pc.filter(c => c.label === 'B').length
       const total = pc.length
-      const score = total > 0 ? Math.round(((A + B) / total) * 1000) / 10 : 0
-      totalScore += score
+      const scoreDecimal = total > 0 ? (A + B) / total : 0
+      totalScoreSum += scoreDecimal
+
       const cell = scoreRow.getCell(i + 2)
-      cell.value = score
-      cell.numFmt = '0.0"%"'
+      cell.value = {
+        formula: `(${colLetter}${rowNumA}+${colLetter}${rowNumB})/SUM(${colLetter}${rowNumA}:${colLetter}${rowNumC})`,
+        result: scoreDecimal,
+      }
+      cell.numFmt = '0.0%'
       cell.font = { bold: true, color: { argb: 'FF4A7FBD' } }
       cell.alignment = { horizontal: 'center' }
-      console.log(`[API /export/${runId}] Score row: paper=${paper.academicYear || paper.filename} A=${A} B=${B} total=${total} score=${score}%`)
     })
 
-    const avgScore = comparisonPapers.length > 0
-      ? Math.round((totalScore / comparisonPapers.length) * 10) / 10
-      : 0
+    const avgScoreDecimal = comparisonPapers.length > 0 ? totalScoreSum / comparisonPapers.length : 0
     const avgScoreCell = scoreRow.getCell(comparisonPapers.length + 2)
-    avgScoreCell.value = avgScore
-    avgScoreCell.numFmt = '0.0"%"'
+    avgScoreCell.value = comparisonPapers.length > 0
+      ? { formula: `AVERAGE(${firstCol}${rowNumScore}:${lastCol}${rowNumScore})`, result: avgScoreDecimal }
+      : 0
+    avgScoreCell.numFmt = '0.0%'
     avgScoreCell.font = { bold: true, color: { argb: 'FF4A7FBD' } }
     avgScoreCell.alignment = { horizontal: 'center' }
-    console.log(`[API /export/${runId}] Average predictability score: ${avgScore}%`)
+    console.log(`[API /export/${runId}] Average predictability score: ${Math.round(avgScoreDecimal * 1000) / 10}%`)
 
     // Write buffer
     console.log(`[API /export/${runId}] Writing Excel buffer...`)
