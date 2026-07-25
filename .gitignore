@@ -44,3 +44,9 @@ next-env.d.ts
 /data/*.db
 /data/*.db-shm
 /data/*.db-wal
+
+# Task and spec documents
+TASKS.md
+IMPLEMENTATION.md
+PROMPT.md
+
