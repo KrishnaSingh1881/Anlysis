@@ -149,9 +149,9 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
 
         const classId = uuidv4()
         db.prepare(`
-          INSERT INTO classifications (id, baseQuestionId, comparedPaperId, label, confidence, reasoning, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(classId, bq.id, paperId, result.answer, result.confidence, result.reasoning, new Date().toISOString())
+          INSERT INTO classifications (id, baseQuestionId, comparedPaperId, label, confidence, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(classId, bq.id, paperId, result.answer, result.confidence, new Date().toISOString())
 
         subResults.push(`${paperLabel}:${result.answer}(step${result.resolvedAtStep})`)
 

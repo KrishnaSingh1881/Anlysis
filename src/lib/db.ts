@@ -70,13 +70,43 @@ function runMigrations(db: Database.Database): void {
       comparedPaperId TEXT NOT NULL,
       label TEXT NOT NULL CHECK(label IN ('A', 'B', 'C')),
       confidence REAL NOT NULL,
-      reasoning TEXT NOT NULL,
       createdAt TEXT NOT NULL,
       FOREIGN KEY (baseQuestionId) REFERENCES questions(id) ON DELETE CASCADE,
       FOREIGN KEY (comparedPaperId) REFERENCES papers(id) ON DELETE CASCADE
     )
   `)
   console.log('[DB] Table ready: classifications')
+
+  // Migration m001: remove reasoning column from existing classifications tables.
+  // SQLite has no DROP COLUMN before 3.35 — we recreate the table.
+  const hasReasoningCol = (db.prepare(
+    "SELECT COUNT(*) as c FROM pragma_table_info('classifications') WHERE name='reasoning'"
+  ).get() as any).c > 0
+  if (hasReasoningCol) {
+    console.log('[DB] Migration m001 — removing reasoning column from classifications')
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE classifications_m001 (
+        id TEXT PRIMARY KEY,
+        baseQuestionId TEXT NOT NULL,
+        comparedPaperId TEXT NOT NULL,
+        label TEXT NOT NULL CHECK(label IN ('A', 'B', 'C')),
+        confidence REAL NOT NULL,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (baseQuestionId) REFERENCES questions(id) ON DELETE CASCADE,
+        FOREIGN KEY (comparedPaperId) REFERENCES papers(id) ON DELETE CASCADE
+      );
+      INSERT INTO classifications_m001
+        SELECT id, baseQuestionId, comparedPaperId, label, confidence, createdAt
+        FROM classifications;
+      DROP TABLE classifications;
+      ALTER TABLE classifications_m001 RENAME TO classifications;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `)
+    console.log('[DB] Migration m001 complete — reasoning column removed')
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS analysis_runs (

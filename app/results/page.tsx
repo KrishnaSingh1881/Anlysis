@@ -25,7 +25,6 @@ interface Classification {
   comparedPaperId: string
   label: 'A' | 'B' | 'C'
   confidence: number
-  reasoning: string
 }
 interface Question { id: string; qno: string; text: string; marks: number }
 interface Paper { id: string; filename: string; academicYear: string; examType: string; semester: string }

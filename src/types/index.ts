@@ -33,7 +33,6 @@ export interface Classification {
   comparedPaperId: string
   label: 'A' | 'B' | 'C'
   confidence: number
-  reasoning: string
   createdAt: string
 }
 
