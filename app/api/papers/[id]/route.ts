@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 import fs from 'fs'
 import path from 'path'
 
@@ -9,14 +9,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   console.log(`[API /papers/${id}] GET`)
   try {
-    const db = getDb()
-    const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(id)
-    if (!paper) {
+    const result = getRepository().getPaperWithQuestions(id)
+    if (!result) {
       console.warn(`[API /papers/${id}] GET — paper not found`)
       return NextResponse.json({ success: false, error: 'Paper not found' }, { status: 404 })
     }
-    const questions = db.prepare('SELECT * FROM questions WHERE paperId = ? ORDER BY qno').all(id) as any[]
-    
+    const { paper, questions } = result
+
     // Check for page images
     const paperDir = path.join(UPLOAD_DIR, id)
     let pageImages: string[] = []
@@ -31,7 +30,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         })
       console.log(`[API /papers/${id}] Found ${pageImages.length} page images`)
     }
-    
+
     console.log(`[API /papers/${id}] GET — found paper with ${questions.length} questions`)
     return NextResponse.json({ success: true, paper, questions, pageImages })
   } catch (err) {
@@ -44,31 +43,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params
   console.log(`[API /papers/${id}] PATCH`)
   try {
-    const db = getDb()
     const body = await request.json()
     console.log(`[API /papers/${id}] PATCH body:`, JSON.stringify(body))
     const now = new Date().toISOString()
 
-    const fields: string[] = []
-    const values: unknown[] = []
-    if (body.verified !== undefined) { fields.push('verified = ?'); values.push(body.verified ? 1 : 0) }
-    if (body.status !== undefined) { fields.push('status = ?'); values.push(body.status) }
-    if (body.courseName !== undefined) { fields.push('courseName = ?'); values.push(body.courseName) }
-    if (body.academicYear !== undefined) { fields.push('academicYear = ?'); values.push(body.academicYear) }
-    if (body.examType !== undefined) { fields.push('examType = ?'); values.push(body.examType) }
-    if (body.semester !== undefined) { fields.push('semester = ?'); values.push(body.semester) }
-
-    if (fields.length > 0) {
-      fields.push('updatedAt = ?')
-      values.push(now, id)
-      const sql = `UPDATE papers SET ${fields.join(', ')} WHERE id = ?`
-      console.log(`[API /papers/${id}] PATCH SQL:`, sql, '| values:', values)
-      db.prepare(sql).run(...values)
-    } else {
-      console.warn(`[API /papers/${id}] PATCH — no recognized fields to update`)
-    }
-
-    const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(id)
+    const paper = getRepository().updatePaperFields(id, body, now)
     console.log(`[API /papers/${id}] PATCH — updated paper:`, JSON.stringify(paper))
     return NextResponse.json({ success: true, paper })
   } catch (err) {
@@ -81,8 +60,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const { id } = await params
   console.log(`[API /papers/${id}] DELETE`)
   try {
-    const db = getDb()
-    db.prepare('DELETE FROM papers WHERE id = ?').run(id)
+    getRepository().deletePaper(id)
     console.log(`[API /papers/${id}] DELETE — paper and cascaded records removed`)
     return NextResponse.json({ success: true })
   } catch (err) {

@@ -1,38 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params
   console.log(`[API /results/${runId}] GET`)
   try {
-    const db = getDb()
+    const repo = getRepository()
 
-    const run = db.prepare('SELECT * FROM analysis_runs WHERE id = ?').get(runId) as any
+    const run = repo.getAnalysisRun(runId)
     if (!run) {
       console.warn(`[API /results/${runId}] Run not found`)
       return NextResponse.json({ success: false, error: 'Run not found' }, { status: 404 })
     }
     console.log(`[API /results/${runId}] Run status=${run.status} progress=${run.progress}/${run.totalSteps}`)
 
-    const comparisonPaperIds: string[] = JSON.parse(run.comparisonPaperIds || '[]')
+    const { comparisonPaperIds } = run
     console.log(`[API /results/${runId}] comparisonPaperIds:`, comparisonPaperIds)
 
-    const baseQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ? ORDER BY qno').all(run.basePaperId) as any[]
+    const baseQuestions = repo.getQuestions(run.basePaperId)
     console.log(`[API /results/${runId}] Base questions: ${baseQuestions.length}`)
 
-    const baseQIds = baseQuestions.map((q: any) => `'${q.id}'`).join(',')
-    const classifications = baseQIds.length > 0
-      ? db.prepare(`SELECT * FROM classifications WHERE baseQuestionId IN (${baseQIds})`).all() as any[]
-      : []
+    const questionIds = baseQuestions.map(q => q.id)
+    const classifications = repo.getClassificationsForQuestions(questionIds)
     console.log(`[API /results/${runId}] Classifications loaded: ${classifications.length}`)
 
     // Calculate scores
     const scores: Record<string, { A: number; B: number; C: number; total: number; score: number }> = {}
     for (const paperId of comparisonPaperIds) {
-      const pc = classifications.filter((c: any) => c.comparedPaperId === paperId)
-      const A = pc.filter((c: any) => c.label === 'A').length
-      const B = pc.filter((c: any) => c.label === 'B').length
-      const C = pc.filter((c: any) => c.label === 'C').length
+      const pc = classifications.filter(c => c.comparedPaperId === paperId)
+      const A = pc.filter(c => c.label === 'A').length
+      const B = pc.filter(c => c.label === 'B').length
+      const C = pc.filter(c => c.label === 'C').length
       const total = pc.length
       const score = total > 0 ? ((A + B) / total) * 100 : 0
       scores[paperId] = { A, B, C, total, score: Math.round(score * 10) / 10 }

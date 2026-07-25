@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 import ExcelJS from 'exceljs'
 
 const ABC_FILLS: Record<string, ExcelJS.Fill> = {
@@ -17,27 +17,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { runId } = await params
   console.log(`[API /export/${runId}] GET — generating Excel MSPA report`)
   try {
-    const db = getDb()
+    const repo = getRepository()
 
-    const run = db.prepare('SELECT * FROM analysis_runs WHERE id = ?').get(runId) as any
+    const run = repo.getAnalysisRun(runId)
     if (!run) {
       console.warn(`[API /export/${runId}] Run not found`)
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
-    const comparisonPaperIds: string[] = JSON.parse(run.comparisonPaperIds || '[]')
-    const basePaper = db.prepare('SELECT * FROM papers WHERE id = ?').get(run.basePaperId) as any
-    const baseQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ? ORDER BY qno').all(run.basePaperId) as any[]
+    const { comparisonPaperIds } = run
+    const basePaper = repo.getPaper(run.basePaperId)
+    const baseQuestions = repo.getQuestions(run.basePaperId)
     const comparisonPapers = comparisonPaperIds
-      .map(id => db.prepare('SELECT * FROM papers WHERE id = ?').get(id) as any)
-      .filter(Boolean)
+      .map(id => repo.getPaper(id))
+      .filter(Boolean) as NonNullable<ReturnType<typeof repo.getPaper>>[]
 
     console.log(`[API /export/${runId}] basePaper="${basePaper?.filename}" baseQuestions=${baseQuestions.length} comparisonPapers=${comparisonPapers.length}`)
 
-    const baseQIds = baseQuestions.map((q: any) => `'${q.id}'`).join(',')
-    const classifications = baseQIds.length > 0
-      ? db.prepare(`SELECT * FROM classifications WHERE baseQuestionId IN (${baseQIds})`).all() as any[]
-      : []
+    const questionIds = baseQuestions.map(q => q.id)
+    const classifications = repo.getClassificationsForQuestions(questionIds)
     console.log(`[API /export/${runId}] Classifications loaded: ${classifications.length}`)
 
     // Build workbook
@@ -95,7 +93,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
       comparisonPapers.forEach((paper, i) => {
         const c = classifications.find(
-          (cl: any) => cl.baseQuestionId === q.id && cl.comparedPaperId === paper.id
+          cl => cl.baseQuestionId === q.id && cl.comparedPaperId === paper.id
         )
         const cell = row.getCell(i + 2)
         if (c) {
@@ -125,7 +123,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       let labelTotal = 0
       comparisonPapers.forEach((paper, i) => {
         const count = classifications.filter(
-          (c: any) => c.comparedPaperId === paper.id && c.label === label
+          c => c.comparedPaperId === paper.id && c.label === label
         ).length
         labelTotal += count
         const cell = row.getCell(i + 2)
@@ -150,9 +148,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     let totalScore = 0
     comparisonPapers.forEach((paper, i) => {
-      const pc = classifications.filter((c: any) => c.comparedPaperId === paper.id)
-      const A = pc.filter((c: any) => c.label === 'A').length
-      const B = pc.filter((c: any) => c.label === 'B').length
+      const pc = classifications.filter(c => c.comparedPaperId === paper.id)
+      const A = pc.filter(c => c.label === 'A').length
+      const B = pc.filter(c => c.label === 'B').length
       const total = pc.length
       const score = total > 0 ? Math.round(((A + B) / total) * 1000) / 10 : 0
       totalScore += score

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 import { v4 as uuidv4 } from 'uuid'
 import { classifyQuestion, sleep } from '@/lib/ollama'
 import fs from 'fs'
@@ -8,7 +8,7 @@ import path from 'path'
 export async function POST(request: NextRequest) {
   console.log('[API /analyze] POST — starting analysis run')
   try {
-    const db = getDb()
+    const repo = getRepository()
     const body = await request.json()
     const { basePaperId, comparisonPaperIds } = body
     console.log(`[API /analyze] POST — basePaperId=${basePaperId} comparisonPaperIds=${JSON.stringify(comparisonPaperIds)}`)
@@ -18,26 +18,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'basePaperId and comparisonPaperIds required' }, { status: 400 })
     }
 
-    const baseQRow = db.prepare('SELECT COUNT(*) as c FROM questions WHERE paperId = ?').get(basePaperId) as any
-    const baseQCount = baseQRow.c
+    const baseQCount = repo.countQuestions(basePaperId)
     const totalSteps = baseQCount * comparisonPaperIds.length
     console.log(`[API /analyze] POST — baseQCount=${baseQCount} comparisonCount=${comparisonPaperIds.length} totalSteps=${totalSteps}`)
 
     const runId = uuidv4()
     const now = new Date().toISOString()
 
-    db.prepare(`
-      INSERT INTO analysis_runs (id, basePaperId, comparisonPaperIds, status, progress, totalSteps, createdAt)
-      VALUES (?, ?, ?, 'pending', 0, ?, ?)
-    `).run(runId, basePaperId, JSON.stringify(comparisonPaperIds), totalSteps, now)
+    repo.createAnalysisRun(runId, basePaperId, comparisonPaperIds, totalSteps, now)
     console.log(`[API /analyze] POST — run created runId=${runId}`)
 
     // Fire-and-forget
     processAnalysis(runId, basePaperId, comparisonPaperIds).catch(err => {
       console.error(`[API /analyze] Background processAnalysis failed for runId=${runId}:`, err)
-      const db2 = getDb()
-      db2.prepare("UPDATE analysis_runs SET status = 'failed', errorMessage = ?, completedAt = ? WHERE id = ?")
-        .run(String(err), new Date().toISOString(), runId)
+      getRepository().failRun(runId, String(err), new Date().toISOString())
     })
 
     return NextResponse.json({ success: true, runId })
@@ -60,7 +54,7 @@ function extractUnit(qno: string): string {
 
 async function processAnalysis(runId: string, basePaperId: string, comparisonPaperIds: string[]) {
   console.log(`\n[Analysis] ===== START runId=${runId} =====`)
-  const db = getDb()
+  const repo = getRepository()
 
   // reason.txt — one file per run, written incrementally so you can tail -f it
   const reasonFilePath = path.join(process.cwd(), 'data', `reason-${runId}.txt`)
@@ -72,14 +66,14 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
     fs.appendFileSync(reasonFilePath, lines + '\n')
   }
 
-  db.prepare("UPDATE analysis_runs SET status = 'classifying' WHERE id = ?").run(runId)
+  repo.setRunStatus(runId, 'classifying')
   console.log(`[Analysis] Status → classifying`)
 
-  const allBaseQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(basePaperId) as any[]
+  const allBaseQuestions = repo.getQuestions(basePaperId)
   console.log(`[Analysis] Base questions loaded: ${allBaseQuestions.length}`)
 
   // Group base questions by unit, preserving DB order within each unit
-  const baseUnitMap = new Map<string, any[]>()
+  const baseUnitMap = new Map<string, typeof allBaseQuestions>()
   for (const bq of allBaseQuestions) {
     const unit = extractUnit(bq.qno)
     if (!baseUnitMap.has(unit)) baseUnitMap.set(unit, [])
@@ -90,12 +84,14 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
   const compPaperUnitMaps = new Map<string, Map<string, string>>()
   // Also keep paper names for reason.txt readability
   const paperNameMap = new Map<string, string>()
+  const questionsByPaper = repo.getQuestionsForPapers(comparisonPaperIds)
+
   for (const paperId of comparisonPaperIds) {
-    const pastQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(paperId) as any[]
-    const paperRow = db.prepare('SELECT filename, academicYear, semester FROM papers WHERE id = ?').get(paperId) as any
-    const paperLabel = paperRow?.academicYear
-      ? `${paperRow.academicYear} SEM-${paperRow.semester}`
-      : (paperRow?.filename ?? paperId.slice(0, 8))
+    const pastQuestions = questionsByPaper.get(paperId) ?? []
+    const paperMeta = repo.getPaperMeta(paperId)
+    const paperLabel = paperMeta?.academicYear
+      ? `${paperMeta.academicYear} SEM-${paperMeta.semester}`
+      : (paperMeta?.filename ?? paperId.slice(0, 8))
     paperNameMap.set(paperId, paperLabel)
 
     console.log(`[Analysis] Loaded comparison paper paperId=${paperId}: ${pastQuestions.length} questions`)
@@ -142,16 +138,18 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
         console.log(`[Analysis]   base (60c): "${bq.text.slice(0, 60)}"`)
         console.log(`[Analysis]   past block (${unitBlock.split('\n').length} lines): "${unitBlock.slice(0, 100).replace(/\n/g, ' | ')}"`)
 
-        db.prepare('UPDATE analysis_runs SET progress = ?, currentQuestion = ? WHERE id = ?')
-          .run(globalStep, bq.qno, runId)
+        repo.updateRunProgress(runId, globalStep, bq.qno)
 
         const result = await classifyQuestion(bq.text, unitBlock, paperId)
 
-        const classId = uuidv4()
-        db.prepare(`
-          INSERT INTO classifications (id, baseQuestionId, comparedPaperId, label, confidence, createdAt)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(classId, bq.id, paperId, result.answer, result.confidence, new Date().toISOString())
+        repo.recordClassification(
+          uuidv4(),
+          bq.id,
+          paperId,
+          result.answer,
+          result.confidence,
+          new Date().toISOString()
+        )
 
         subResults.push(`${paperLabel}:${result.answer}(step${result.resolvedAtStep})`)
 
@@ -177,8 +175,7 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
     await sleep(500)
   }
 
-  db.prepare("UPDATE analysis_runs SET status = 'complete', completedAt = ? WHERE id = ?")
-    .run(new Date().toISOString(), runId)
+  repo.completeRun(runId, new Date().toISOString())
   appendReason(`\n=== COMPLETE: ${globalStep} total steps | ${new Date().toISOString()} ===\n`)
   console.log(`[Analysis] ===== COMPLETE runId=${runId} totalSteps=${globalStep} =====\n`)
   console.log(`[Analysis] Reason log written to: ${reasonFilePath}`)
@@ -187,9 +184,8 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
 export async function GET() {
   console.log('[API /analyze] GET — listing all runs')
   try {
-    const db = getDb()
-    const runs = db.prepare('SELECT * FROM analysis_runs ORDER BY createdAt DESC').all()
-    console.log(`[API /analyze] GET — returning ${(runs as any[]).length} runs`)
+    const runs = getRepository().listAnalysisRuns()
+    console.log(`[API /analyze] GET — returning ${runs.length} runs`)
     return NextResponse.json({ success: true, runs })
   } catch (err) {
     console.error('[API /analyze] GET threw:', err)

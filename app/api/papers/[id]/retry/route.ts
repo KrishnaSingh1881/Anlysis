@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 import { runExtractionPipeline } from '@/lib/extraction'
 import fs from 'fs'
 import path from 'path'
@@ -15,8 +15,8 @@ export async function POST(
   console.log(`[API /papers/${paperId}/retry] POST — re-triggering extraction`)
 
   try {
-    const db = getDb()
-    const paper = db.prepare('SELECT * FROM papers WHERE id = ?').get(paperId) as any
+    const repo = getRepository()
+    const paper = repo.getPaper(paperId)
 
     if (!paper) {
       return NextResponse.json({ success: false, error: 'Paper not found' }, { status: 404 })
@@ -27,9 +27,9 @@ export async function POST(
 
     if (!fs.existsSync(pdfPath)) {
       console.error(`[API /papers/${paperId}/retry] Source PDF not found at ${pdfPath}`)
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Source PDF not found on server. Please delete and re-upload the paper.' 
+      return NextResponse.json({
+        success: false,
+        error: 'Source PDF not found on server. Please delete and re-upload the paper.',
       }, { status: 404 })
     }
 
@@ -37,11 +37,11 @@ export async function POST(
     const now = new Date().toISOString()
 
     // 1. Clear existing questions
-    db.prepare('DELETE FROM questions WHERE paperId = ?').run(paperId)
+    repo.clearQuestions(paperId)
     console.log(`[API /papers/${paperId}/retry] Existing questions cleared`)
 
-    // 2. Set status to 'processed' (or extracting)
-    db.prepare("UPDATE papers SET status = 'extracted', updatedAt = ? WHERE id = ?").run(now, paperId)
+    // 2. Set status to extracting
+    repo.setPaperStatus(paperId, 'extracted', now)
 
     // 3. Run extraction pipeline
     console.log(`[API /papers/${paperId}/retry] Running extraction pipeline...`)
@@ -50,24 +50,19 @@ export async function POST(
 
     // 4. Insert questions
     if (questions.length > 0) {
-      const stmt = db.prepare(`
-        INSERT INTO questions (id, paperId, qno, text, confidence, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      for (const q of questions) {
-        stmt.run(uuidv4(), paperId, q.qno, q.text, confidence, now)
-      }
+      const questionsWithIds = questions.map(q => ({ id: uuidv4(), qno: q.qno, text: q.text }))
+      repo.saveExtractedQuestions(paperId, questionsWithIds, confidence, now)
     }
 
     // 5. Update status
     const finalStatus = questions.length > 0 ? 'extracted' : 'failed'
-    db.prepare('UPDATE papers SET status = ?, updatedAt = ? WHERE id = ?').run(finalStatus, now, paperId)
+    repo.setPaperStatus(paperId, finalStatus, now)
     console.log(`[API /papers/${paperId}/retry] Status updated to ${finalStatus}`)
 
     return NextResponse.json({
       success: true,
       questionCount: questions.length,
-      confidence
+      confidence,
     })
   } catch (err) {
     console.error(`[API /papers/${paperId}/retry] Error:`, err)

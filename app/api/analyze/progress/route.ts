@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 
 export async function GET(request: NextRequest) {
   const runId = new URL(request.url).searchParams.get('runId')
@@ -21,8 +21,7 @@ export async function GET(request: NextRequest) {
       const interval = setInterval(() => {
         tickCount++
         try {
-          const db = getDb()
-          const run = db.prepare('SELECT * FROM analysis_runs WHERE id = ?').get(runId) as any
+          const run = getRepository().getAnalysisRun(runId)
 
           if (!run) {
             console.warn(`[API /analyze/progress] runId=${runId} not found — closing stream`)

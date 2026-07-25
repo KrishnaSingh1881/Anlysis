@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 import { v4 as uuidv4 } from 'uuid'
 import { runExtractionPipeline } from '@/lib/extraction'
 import fs from 'fs'
@@ -33,11 +33,8 @@ export async function POST(request: NextRequest) {
     const paperId = uuidv4()
     const now = new Date().toISOString()
 
-    const db = getDb()
-    db.prepare(`
-      INSERT INTO papers (id, filename, status, verified, createdAt, updatedAt)
-      VALUES (?, ?, 'extracted', 0, ?, ?)
-    `).run(paperId, file.name, now, now)
+    const repo = getRepository()
+    repo.createPaper(paperId, file.name, now)
     console.log(`[API /papers] Paper record created — id=${paperId}`)
 
     // Create paper directory and save source PDF for potential retries
@@ -54,21 +51,16 @@ export async function POST(request: NextRequest) {
 
     // Insert questions
     if (questions.length > 0) {
-      const stmt = db.prepare(`
-        INSERT INTO questions (id, paperId, qno, text, confidence, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      for (const q of questions) {
-        stmt.run(uuidv4(), paperId, q.qno, q.text, confidence, now)
-        console.log(`[API /papers]   → inserted qno=${q.qno}`)
-      }
+      const questionsWithIds = questions.map(q => ({ id: uuidv4(), qno: q.qno, text: q.text }))
+      repo.saveExtractedQuestions(paperId, questionsWithIds, confidence, now)
+      console.log(`[API /papers] Inserted ${questions.length} questions`)
     } else {
       console.warn('[API /papers] No questions extracted — paper saved for manual entry')
     }
 
     // Mark status
     const finalStatus = questions.length > 0 ? 'extracted' : 'failed'
-    db.prepare('UPDATE papers SET status = ?, updatedAt = ? WHERE id = ?').run(finalStatus, now, paperId)
+    repo.setPaperStatus(paperId, finalStatus, now)
     console.log(`[API /papers] Paper status set to "${finalStatus}"`)
 
     return NextResponse.json({
@@ -89,14 +81,9 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   console.log('[API /papers] GET — listing papers')
   try {
-    const db = getDb()
-    const papers = db.prepare('SELECT * FROM papers ORDER BY createdAt DESC').all() as any[]
-    const papersWithCounts = papers.map(p => {
-      const row = db.prepare('SELECT COUNT(*) as count FROM questions WHERE paperId = ?').get(p.id) as any
-      return { ...p, questionCount: row.count }
-    })
-    console.log(`[API /papers] GET — ${papersWithCounts.length} papers`)
-    return NextResponse.json({ success: true, papers: papersWithCounts })
+    const papers = getRepository().listPapersWithCounts()
+    console.log(`[API /papers] GET — ${papers.length} papers`)
+    return NextResponse.json({ success: true, papers })
   } catch (err) {
     console.error('[API /papers] GET threw:', err)
     return NextResponse.json({ success: false, error: 'Failed to fetch papers' }, { status: 500 })

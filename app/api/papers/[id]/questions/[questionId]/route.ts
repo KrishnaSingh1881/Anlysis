@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getRepository } from '@/lib/repository'
 
 export async function DELETE(
   _request: NextRequest,
@@ -8,9 +8,8 @@ export async function DELETE(
   const { id, questionId } = await params
   console.log(`[API /papers/${id}/questions/${questionId}] DELETE`)
   try {
-    const db = getDb()
-    const result = db.prepare('DELETE FROM questions WHERE id = ? AND paperId = ?').run(questionId, id)
-    if (result.changes === 0) {
+    const deleted = getRepository().deleteQuestion(questionId, id)
+    if (!deleted) {
       return NextResponse.json({ success: false, error: 'Question not found' }, { status: 404 })
     }
     console.log(`[API /papers/${id}/questions/${questionId}] DELETE — removed`)
