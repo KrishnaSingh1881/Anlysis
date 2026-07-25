@@ -48,6 +48,7 @@ export default function PaperEditPage() {
   const [isRetrying, setIsRetrying] = useState(false)
   const [isAddingQuestion, setIsAddingQuestion] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
 
   // Drag state
   const dragIndex = useRef<number | null>(null)
@@ -199,7 +200,11 @@ export default function PaperEditPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this paper? This will also remove all questions and classifications.')) return
+    setShowDeleteModal(true)
+  }
+
+  async function confirmDelete() {
+    setShowDeleteModal(false)
     try {
       const res = await fetch(`/api/papers/${paperId}`, { method: 'DELETE' })
       const data = await res.json()
@@ -265,6 +270,62 @@ export default function PaperEditPage() {
   return (
     <div style={{ minHeight: '100vh', background: neo.bg, padding: 24, fontFamily: "'DM Sans', sans-serif" }}>
       <Toaster position="top-right" />
+
+      {/* Custom delete confirmation modal */}
+      {showDeleteModal && (
+        <div
+          role="dialog" aria-modal="true"
+          aria-labelledby="del-modal-title" aria-describedby="del-modal-desc"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(44,57,74,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+          }}
+          onClick={() => setShowDeleteModal(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: neo.bg,
+              boxShadow: '12px 12px 28px #B8BFC6, -12px -12px 28px #FFFFFF',
+              borderRadius: 20, padding: '32px 32px 28px',
+              maxWidth: 420, width: '90%',
+              display: 'flex', flexDirection: 'column', gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+                background: '#FDD5D5', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22, boxShadow: '3px 3px 8px #C8CDD4, -3px -3px 8px #FFFFFF',
+              }} aria-hidden="true">🗑</div>
+              <h2 id="del-modal-title" style={{ fontSize: 18, fontWeight: 700, color: '#2D3748', margin: 0 }}>Delete Paper?</h2>
+            </div>
+            <p id="del-modal-desc" style={{ fontSize: 14, color: '#718096', margin: 0, lineHeight: 1.65 }}>
+              <strong style={{ color: '#2D3748' }}>{paper?.filename}</strong> and all its extracted questions and classification results will be <strong>permanently removed</strong>. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                autoFocus
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: 600, fontSize: 14, background: neo.bg, color: '#718096',
+                  boxShadow: '4px 4px 10px #C8CDD4, -4px -4px 10px #FFFFFF',
+                }}
+              >Cancel</button>
+              <button
+                onClick={confirmDelete}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: 700, fontSize: 14, background: '#E53E3E', color: '#fff',
+                  boxShadow: '4px 4px 10px #C8CDD4',
+                }}
+              >Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>

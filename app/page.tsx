@@ -62,6 +62,7 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false)
   const [selectedBase, setSelectedBase] = useState<string | null>(null)
   const [selectedComparisons, setSelectedComparisons] = useState<string[]>([])
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; filename: string } | null>(null)
 
   useEffect(() => {
     fetch('/api/health')
@@ -131,7 +132,14 @@ export default function Dashboard() {
   }
 
   async function handleDeletePaper(paperId: string) {
-    if (!confirm('Delete this paper? This will also remove all questions and classifications.')) return
+    const paper = papers.find(p => p.id === paperId)
+    setDeleteTarget({ id: paperId, filename: paper?.filename || 'this paper' })
+  }
+
+  async function confirmDeletePaper() {
+    if (!deleteTarget) return
+    const paperId = deleteTarget.id
+    setDeleteTarget(null)
     try {
       const res = await fetch(`/api/papers/${paperId}`, { method: 'DELETE' })
       const data = await res.json()
@@ -160,6 +168,62 @@ export default function Dashboard() {
   return (
     <div style={{ minHeight: '100vh', background: neo.bg, padding: 24, fontFamily: "'DM Sans', sans-serif" }}>
       <Toaster position="top-right" />
+
+      {/* Custom delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          role="dialog" aria-modal="true"
+          aria-labelledby="del-modal-title" aria-describedby="del-modal-desc"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(44,57,74,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+          }}
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: neo.bg,
+              boxShadow: '12px 12px 28px #B8BFC6, -12px -12px 28px #FFFFFF',
+              borderRadius: 20, padding: '32px 32px 28px',
+              maxWidth: 420, width: '90%',
+              display: 'flex', flexDirection: 'column', gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+                background: neo.cellC, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22, boxShadow: '3px 3px 8px #C8CDD4, -3px -3px 8px #FFFFFF',
+              }} aria-hidden="true">🗑</div>
+              <h2 id="del-modal-title" style={{ fontSize: 18, fontWeight: 700, color: neo.textPrimary, margin: 0 }}>Delete Paper?</h2>
+            </div>
+            <p id="del-modal-desc" style={{ fontSize: 14, color: neo.textSecondary, margin: 0, lineHeight: 1.65 }}>
+              <strong style={{ color: neo.textPrimary }}>{deleteTarget.filename}</strong> and all its extracted questions and classification results will be <strong>permanently removed</strong>. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button
+                onClick={() => setDeleteTarget(null)}
+                autoFocus
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: 600, fontSize: 14, background: neo.bg, color: neo.textSecondary,
+                  boxShadow: '4px 4px 10px #C8CDD4, -4px -4px 10px #FFFFFF',
+                }}
+              >Cancel</button>
+              <button
+                onClick={confirmDeletePaper}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                  fontWeight: 700, fontSize: 14, background: '#E53E3E', color: '#fff',
+                  boxShadow: '4px 4px 10px #C8CDD4',
+                }}
+              >Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
