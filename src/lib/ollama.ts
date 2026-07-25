@@ -270,30 +270,40 @@ export async function classifyQuestion(
     .replace('{pastPaperUnitBlock}', pastPaperUnitBlock)
 
   const response = await callOllama(prompt, '', DEFAULT_MODEL, 0.15, {
-    num_predict: 120,
+    num_predict: 2048,
     num_ctx: 4096,
   })
 
-  // Parse ANSWER: X and REASON: ...
-  const answerMatch = response.match(/ANSWER:\s*([ABC])/i)
-  const reasonMatch = response.match(/REASON:\s*(.+)/i)
+  console.log(`[Classify] RAW RESPONSE for paperId=${comparisonPaperId}:\n---\n${response}\n---`)
+
+  // Priority 1: standard "ANSWER: A" format
+  let answerMatch = response.match(/ANSWER:\s*([ABC])/i)
+  // Priority 2: line that is just a single letter (e.g. "C")
+  if (!answerMatch) answerMatch = response.match(/^\s*([ABC])\s*$/m)
+  // Priority 3: line starting with A/B/C followed by punctuation or whitespace
+  if (!answerMatch) answerMatch = response.match(/^([ABC])[:\s.]/m)
 
   const answer = (answerMatch ? answerMatch[1].toUpperCase() : 'C') as 'A' | 'B' | 'C'
-  const reasoning = reasonMatch ? reasonMatch[1].trim() : 'No reason extracted — manual review needed'
 
-  // Infer which step resolved it; warn if the model didn't name a step
+  // Priority 1: standard "REASON: ..." line
+  const reasonMatch = response.match(/REASON:\s*(.+?)(?:\n|$)/i)
+  // Priority 2: full response text (no truncation)
+  const reasoning = reasonMatch
+    ? reasonMatch[1].trim()
+    : (response.trim() || 'No reason extracted — manual review needed')
+
   const stepMatch = reasoning.match(/Step\s*(\d)/i)
-  const resolvedAtStep = stepMatch ? parseInt(stepMatch[1], 10) : 3
-  if (!stepMatch) {
-    console.warn(`[Classify] WARNING — reason does not mention a step number (model may not have followed format). Raw: ${response.slice(0, 200)}`)
-  }
+    ?? response.match(/Step\s*(\d)/i)
+  const resolvedAtStep = stepMatch ? parseInt(stepMatch[1], 10) : (answer === 'C' ? 2 : 3)
+
   if (!answerMatch) {
-    console.warn(`[Classify] WARNING — could not parse ANSWER. Raw: ${response.slice(0, 200)}`)
+    console.warn(`[Classify] WARNING — could not parse ANSWER from response. Defaulting to C.`)
+    console.warn(`[Classify] Full response was: ${response}`)
   }
 
   const confidence = answer === 'A' ? 0.9 : answer === 'B' ? 0.6 : 0.3
 
-  console.log(`[Classify] ✓ paperId=${comparisonPaperId} | answer=${answer} | step=${resolvedAtStep} | reason="${reasoning}"`)
+  console.log(`[Classify] ✓ paperId=${comparisonPaperId} | answer=${answer} | step=${resolvedAtStep} | reason="${reasoning.slice(0, 80)}"`)
 
   return { answer, confidence, reasoning, resolvedAtStep }
 }
