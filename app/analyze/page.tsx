@@ -91,36 +91,38 @@ function AnalyzeContent() {
             ))}
           </div>
 
-          {/* Progress bar */}
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8, color: neo.textSecondary }}>
-              <span>
-                Classifying: <strong style={{ color: neo.textPrimary }}>{currentQuestion || '—'}</strong>
-              </span>
-              <span style={{ fontWeight: 600, color: neo.accent }}>{pct}%</span>
+          {/* Progress bar & live status */}
+          <div aria-live="polite" aria-atomic="false">
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8, color: neo.textSecondary }}>
+                <span>
+                  Classifying: <strong style={{ color: neo.textPrimary }}>{currentQuestion || '—'}</strong>
+                </span>
+                <span style={{ fontWeight: 600, color: neo.accent, fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+              </div>
+              <div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Analysis progress: ${pct}%`} style={{ height: 16, borderRadius: 8, background: neo.bg, boxShadow: neo.inset }}>
+                <div style={{
+                  height: '100%', borderRadius: 8, background: neo.accent,
+                  width: `${pct}%`, transition: 'width 0.5s ease',
+                }} />
+              </div>
+              <p style={{ fontSize: 12, color: neo.textSecondary, textAlign: 'right', margin: '4px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                {progress} / {totalSteps} questions processed
+              </p>
             </div>
-            <div style={{ height: 16, borderRadius: 8, background: neo.bg, boxShadow: neo.inset }}>
-              <div style={{
-                height: '100%', borderRadius: 8, background: neo.accent,
-                width: `${pct}%`, transition: 'width 0.5s ease',
-              }} />
-            </div>
-            <p style={{ fontSize: 12, color: neo.textSecondary, textAlign: 'right', margin: '4px 0 0' }}>
-              {progress} / {totalSteps} questions processed
-            </p>
-          </div>
 
-          {/* Status messages */}
-          {status === 'complete' && (
-            <div style={{ background: neo.cellA, color: neo.cellAText, padding: '12px 16px', borderRadius: 12, marginBottom: 16, textAlign: 'center', fontWeight: 600, fontSize: 14 }}>
-              ✓ Analysis complete — redirecting to results…
-            </div>
-          )}
-          {status === 'failed' && (
-            <div style={{ background: neo.cellC, color: neo.cellCText, padding: '12px 16px', borderRadius: 12, marginBottom: 16, fontSize: 14 }}>
-              <strong>Analysis failed.</strong> {run?.errorMessage || 'Unknown error.'}
-            </div>
-          )}
+            {/* Status messages */}
+            {status === 'complete' && (
+              <div style={{ background: neo.cellA, color: neo.cellAText, padding: '12px 16px', borderRadius: 12, marginBottom: 16, textAlign: 'center', fontWeight: 600, fontSize: 14 }}>
+                ✓ Analysis complete — redirecting to results…
+              </div>
+            )}
+            {status === 'failed' && (
+              <div style={{ background: neo.cellC, color: neo.cellCText, padding: '12px 16px', borderRadius: 12, marginBottom: 16, fontSize: 14 }}>
+                <strong>Analysis failed.</strong> {run?.errorMessage || 'Unknown error.'}
+              </div>
+            )}
+          </div>
 
           <button
             onClick={() => { esRef.current?.close(); router.push('/') }}

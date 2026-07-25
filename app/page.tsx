@@ -170,18 +170,24 @@ export default function Dashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <div style={{
-            padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 600,
-            background: ollamaOnline ? neo.cellA : neo.cellC,
-            color: ollamaOnline ? neo.cellAText : neo.cellCText,
-          }}>
-            {ollamaOnline ? '● Ollama Online' : '● Ollama Offline'}
+          <div
+            role="status"
+            aria-label={ollamaOnline ? 'Ollama Online' : 'Ollama Offline'}
+            style={{
+              padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 600,
+              background: ollamaOnline ? neo.cellA : neo.cellC,
+              color: ollamaOnline ? neo.cellAText : neo.cellCText,
+            }}
+          >
+            <span aria-hidden="true">{ollamaOnline ? '● ' : '● '}</span>
+            {ollamaOnline ? 'Ollama Online' : 'Ollama Offline'}
           </div>
           <button
             onClick={() => router.push('/settings')}
-            style={{ padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: neo.bg, boxShadow: neo.btn, color: neo.accent }}
+            aria-label="Open Settings"
+            style={{ padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: neo.bg, boxShadow: neo.btn, color: neo.accent, outline: 'none' }}
           >
-            ⚙ Settings
+            <span aria-hidden="true">⚙</span> Settings
           </button>
         </div>
       </div>
@@ -207,7 +213,7 @@ export default function Dashboard() {
           { label: 'Pending', value: papers.filter(p => !p.verified).length, color: neo.warning },
         ].map(s => (
           <div key={s.label} style={{ background: neo.bg, boxShadow: neo.raised, borderRadius: 16, padding: 20, textAlign: 'center' }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 32, fontWeight: 700, color: s.color, fontVariantNumeric: 'tabular-nums' }}>{s.value}</div>
             <div style={{ fontSize: 13, color: neo.textSecondary, marginTop: 4 }}>{s.label}</div>
           </div>
         ))}
@@ -220,7 +226,7 @@ export default function Dashboard() {
           {/* Upload zone */}
           <div style={{ background: neo.bg, boxShadow: neo.raised, borderRadius: 16, padding: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: neo.textPrimary, margin: '0 0 12px' }}>Upload Paper</h2>
-            <label style={{ display: 'block', cursor: uploading ? 'not-allowed' : 'pointer' }}>
+            <label htmlFor="pdf-upload-input" style={{ display: 'block', cursor: uploading ? 'not-allowed' : 'pointer' }}>
               <div style={{
                 background: neo.bg, boxShadow: neo.inset, borderRadius: 12,
                 padding: '32px 20px', textAlign: 'center',
@@ -229,7 +235,7 @@ export default function Dashboard() {
                   <p style={{ color: neo.accent, fontWeight: 500 }}>⏳ Extracting questions…</p>
                 ) : (
                   <>
-                    <div style={{ fontSize: 36, marginBottom: 8 }}>📄</div>
+                    <div style={{ fontSize: 36, marginBottom: 8 }} aria-hidden="true">📄</div>
                     <p style={{ color: neo.accent, fontWeight: 600, margin: 0 }}>Click to upload PDF</p>
                     <p style={{ color: neo.textSecondary, fontSize: 12, margin: '4px 0 0' }}>
                       Supports scanned &amp; text PDFs · 4-level OCR pipeline
@@ -237,7 +243,7 @@ export default function Dashboard() {
                   </>
                 )}
               </div>
-              <input type="file" accept=".pdf" onChange={handleUpload} style={{ display: 'none' }} disabled={uploading} />
+              <input id="pdf-upload-input" type="file" accept=".pdf" onChange={handleUpload} style={{ display: 'none' }} disabled={uploading} aria-label="Upload exam paper PDF" />
             </label>
           </div>
 
@@ -267,6 +273,8 @@ export default function Dashboard() {
                     <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                       <button
                         onClick={() => setSelectedBase(selectedBase === paper.id ? null : paper.id)}
+                        aria-label={`Set ${paper.filename} as base paper`}
+                        aria-pressed={selectedBase === paper.id}
                         style={{
                           fontSize: 11, padding: '3px 8px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600,
                           background: selectedBase === paper.id ? neo.accent : neo.bg,
@@ -276,6 +284,8 @@ export default function Dashboard() {
                       >Base</button>
                       <button
                         onClick={() => toggleComparison(paper.id)}
+                        aria-label={`Toggle ${paper.filename} as comparison paper`}
+                        aria-pressed={selectedComparisons.includes(paper.id)}
                         style={{
                           fontSize: 11, padding: '3px 8px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600,
                           background: selectedComparisons.includes(paper.id) ? neo.success : neo.bg,
@@ -285,10 +295,12 @@ export default function Dashboard() {
                       >Compare</button>
                       <button
                         onClick={() => router.push(`/papers/${paper.id}`)}
+                        aria-label={`Edit ${paper.filename}`}
                         style={{ fontSize: 11, padding: '3px 8px', borderRadius: 8, border: 'none', cursor: 'pointer', background: neo.bg, color: neo.textSecondary, boxShadow: neo.raisedSm }}
                       >Edit</button>
                       <button
                         onClick={() => handleDeletePaper(paper.id)}
+                        aria-label={`Delete ${paper.filename}`}
                         style={{ fontSize: 11, padding: '3px 8px', borderRadius: 8, border: 'none', cursor: 'pointer', background: neo.bg, color: neo.danger, boxShadow: neo.raisedSm }}
                       >Delete</button>
                     </div>

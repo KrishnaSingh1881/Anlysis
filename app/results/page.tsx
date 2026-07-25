@@ -287,7 +287,7 @@ function ResultsContent() {
                 Predictability Score (%)
               </td>
               {comparisonPapers.map(p => (
-                <td key={p.id} style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: neo.accent, fontSize: 14 }}>
+                <td key={p.id} style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: neo.accent, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
                   {Math.round((scores[p.id]?.score ?? 0) * 10) / 10}%
                 </td>
               ))}

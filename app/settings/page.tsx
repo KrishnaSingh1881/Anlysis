@@ -19,7 +19,7 @@ const neo = {
 }
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '12px 14px', borderRadius: 10, border: 'none', outline: 'none',
+  width: '100%', padding: '12px 14px', borderRadius: 10, border: 'none',
   background: neo.bg, boxShadow: neo.inset, color: neo.textPrimary,
   fontSize: 14, fontFamily: "'DM Sans', sans-serif", boxSizing: 'border-box',
 }
@@ -104,22 +104,29 @@ export default function SettingsPage() {
           <h2 style={{ fontSize: 15, fontWeight: 700, color: neo.textPrimary, margin: '0 0 20px' }}>Ollama Configuration</h2>
 
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>Base URL</label>
+            <label htmlFor="ollama-base-url" style={labelStyle}>Base URL</label>
             <input
+              id="ollama-base-url"
               value={ollamaBaseUrl}
               onChange={e => setOllamaBaseUrl(e.target.value)}
               style={inputStyle}
               placeholder="http://localhost:11434"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
             />
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>Default Model</label>
+            <label htmlFor="ollama-model" style={labelStyle}>Default Model</label>
             <input
+              id="ollama-model"
               value={defaultModel}
               onChange={e => setDefaultModel(e.target.value)}
               style={inputStyle}
               placeholder="gemma3:4b"
+              autoComplete="off"
+              spellCheck={false}
             />
             <p style={{ fontSize: 11, color: neo.textSecondary, margin: '4px 0 0' }}>
               Must be pulled in Ollama: <code style={{ fontFamily: 'monospace' }}>ollama pull gemma4:e4b</code>
@@ -156,12 +163,14 @@ export default function SettingsPage() {
         <div style={{ background: neo.bg, boxShadow: neo.raised, borderRadius: 16, padding: 24, marginBottom: 20 }}>
           <h2 style={{ fontSize: 15, fontWeight: 700, color: neo.textPrimary, margin: '0 0 16px' }}>OCR Configuration</h2>
 
-          <label style={labelStyle}>
+          <label htmlFor="ocr-threshold" style={labelStyle}>
             Confidence Threshold: <strong style={{ color: neo.accent }}>{ocrThreshold}%</strong>
           </label>
           <input
+            id="ocr-threshold"
             type="range" min={0} max={100} value={ocrThreshold}
             onChange={e => setOcrThreshold(Number(e.target.value))}
+            aria-label={`OCR Confidence Threshold: ${ocrThreshold}%`}
             style={{ width: '100%', accentColor: neo.accent, cursor: 'pointer' }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: neo.textSecondary, marginTop: 4 }}>
@@ -182,11 +191,14 @@ export default function SettingsPage() {
             Used for Level 4 fallback when Tesseract + Ollama vision both fail.
           </p>
           <input
+            id="claude-api-key"
             type="password"
             value={claudeApiKey}
             onChange={e => setClaudeApiKey(e.target.value)}
             style={inputStyle}
             placeholder="sk-ant-…"
+            autoComplete="off"
+            spellCheck={false}
           />
         </div>
 
