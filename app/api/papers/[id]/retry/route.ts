@@ -51,11 +51,11 @@ export async function POST(
     // 4. Insert questions
     if (questions.length > 0) {
       const stmt = db.prepare(`
-        INSERT INTO questions (id, paperId, qno, text, marks, co, isOr, confidence, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO questions (id, paperId, qno, text, confidence, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
       for (const q of questions) {
-        stmt.run(uuidv4(), paperId, q.qno, q.text, q.marks, q.co, q.isOr ? 1 : 0, confidence, now)
+        stmt.run(uuidv4(), paperId, q.qno, q.text, confidence, now)
       }
     }
 

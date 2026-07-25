@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import toast, { Toaster } from 'react-hot-toast'
 
@@ -15,16 +15,12 @@ const neo = {
   textPrimary: '#2D3748',
   textSecondary: '#718096',
   warning: '#ECC94B',
-  cellB: '#FDF3C8', cellBText: '#92620A',
 }
 
 interface Question {
   id: string
   qno: string
   text: string
-  marks: number
-  co: string
-  isOr: boolean
   confidence: number
 }
 
@@ -37,11 +33,6 @@ interface Paper {
   verified: boolean
 }
 
-interface PageImage {
-  path: string
-  pageNumber: number
-}
-
 export default function PaperEditPage() {
   const params = useParams()
   const router = useRouter()
@@ -52,21 +43,39 @@ export default function PaperEditPage() {
   const [pageImages, setPageImages] = useState<string[]>([])
   const [currentPage, setCurrentPage] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [savingId, setSavingId] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
+  const [isAddingQuestion, setIsAddingQuestion] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Drag state
+  const dragIndex = useRef<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
   useEffect(() => {
     fetch(`/api/papers/${paperId}`)
       .then(r => r.json())
       .then(d => {
-        if (d.success) { 
+        if (d.success) {
           setPaper(d.paper)
-          setQuestions(d.questions || [])
+          setQuestions((d.questions || []).map((q: any) => ({
+            id: q.id, qno: q.qno, text: q.text, confidence: q.confidence,
+          })))
           setPageImages(d.pageImages || [])
         }
       })
       .finally(() => setLoading(false))
   }, [paperId])
+
+  // Warn before leaving with unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) { e.preventDefault(); e.returnValue = '' }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
 
   async function handleRetry() {
     setIsRetrying(true)
@@ -76,11 +85,13 @@ export default function PaperEditPage() {
       const data = await res.json()
       if (data.success) {
         toast.success(`Success! Extracted ${data.questionCount} questions.`, { id: tid })
-        // Reload data
         const res2 = await fetch(`/api/papers/${paperId}`)
         const d2 = await res2.json()
         if (d2.success) {
-          setQuestions(d2.questions || [])
+          setQuestions((d2.questions || []).map((q: any) => ({
+            id: q.id, qno: q.qno, text: q.text, confidence: q.confidence,
+          })))
+          setIsDirty(false)
         }
       } else {
         toast.error(data.error || 'Retry failed', { id: tid })
@@ -93,28 +104,82 @@ export default function PaperEditPage() {
     }
   }
 
-  async function handleBlur(q: Question) {
-    setSavingId(q.id)
+  async function handleSaveAll() {
+    setIsSaving(true)
     try {
       const res = await fetch(`/api/papers/${paperId}/questions`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionId: q.id, text: q.text, marks: q.marks, co: q.co, isOr: q.isOr }),
+        body: JSON.stringify({
+          questions: questions.map(q => ({ id: q.id, qno: q.qno, text: q.text })),
+        }),
       })
       const data = await res.json()
-      if (!data.success) toast.error('Save failed')
+      if (data.success) {
+        toast.success('Changes saved')
+        setIsDirty(false)
+      } else {
+        toast.error('Save failed')
+      }
     } catch {
       toast.error('Save failed')
     } finally {
-      setSavingId(null)
+      setIsSaving(false)
     }
   }
 
-  function updateField(id: string, field: keyof Question, value: string | number | boolean) {
+  function updateField(id: string, field: 'qno' | 'text', value: string) {
     setQuestions(qs => qs.map(q => q.id === id ? { ...q, [field]: value } : q))
+    setIsDirty(true)
+  }
+
+  async function handleAddQuestion() {
+    setIsAddingQuestion(true)
+    try {
+      const res = await fetch(`/api/papers/${paperId}/questions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qno: `Q${questions.length + 1}`, text: '' }),
+      })
+      const data = await res.json()
+      if (data.success && data.question) {
+        const q = data.question
+        setQuestions(qs => [...qs, { id: q.id, qno: q.qno, text: q.text, confidence: q.confidence }])
+        setIsDirty(true)
+        toast.success('Question added')
+      } else {
+        toast.error('Failed to add question')
+      }
+    } catch {
+      toast.error('Failed to add question')
+    } finally {
+      setIsAddingQuestion(false)
+    }
+  }
+
+  async function handleDeleteQuestion(questionId: string) {
+    setDeletingId(questionId)
+    try {
+      const res = await fetch(`/api/papers/${paperId}/questions/${questionId}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (data.success) {
+        setQuestions(qs => qs.filter(q => q.id !== questionId))
+        toast.success('Question deleted')
+      } else {
+        toast.error('Failed to delete question')
+      }
+    } catch {
+      toast.error('Failed to delete question')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   async function handleVerify() {
+    if (isDirty) {
+      toast.error('Save your changes first before verifying')
+      return
+    }
     try {
       const res = await fetch(`/api/papers/${paperId}`, {
         method: 'PATCH',
@@ -147,6 +212,40 @@ export default function PaperEditPage() {
     } catch {
       toast.error('Failed to delete paper')
     }
+  }
+
+  // ── Drag handlers ──────────────────────────────────────────────────────────
+
+  function onDragStart(index: number) {
+    dragIndex.current = index
+  }
+
+  function onDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault()
+    setDragOverIndex(index)
+  }
+
+  function onDrop(index: number) {
+    const from = dragIndex.current
+    if (from === null || from === index) {
+      setDragOverIndex(null)
+      dragIndex.current = null
+      return
+    }
+    setQuestions(qs => {
+      const next = [...qs]
+      const [moved] = next.splice(from, 1)
+      next.splice(index, 0, moved)
+      return next
+    })
+    setIsDirty(true)
+    dragIndex.current = null
+    setDragOverIndex(null)
+  }
+
+  function onDragEnd() {
+    dragIndex.current = null
+    setDragOverIndex(null)
   }
 
   if (loading) return (
@@ -187,16 +286,15 @@ export default function PaperEditPage() {
         <button
           onClick={handleRetry}
           disabled={isRetrying}
-          style={{ 
-            padding: '8px 16px', borderRadius: 12, border: 'none', 
-            cursor: isRetrying ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 13, 
+          style={{
+            padding: '8px 16px', borderRadius: 12, border: 'none',
+            cursor: isRetrying ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: 13,
             background: neo.bg, boxShadow: neo.btn, color: neo.accent,
-            opacity: isRetrying ? 0.6 : 1
+            opacity: isRetrying ? 0.6 : 1,
           }}
         >
           {isRetrying ? '⌛ Retrying...' : '🔄 Retry Extraction'}
         </button>
-
         <button
           onClick={handleDelete}
           style={{ padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: neo.bg, boxShadow: neo.btn, color: '#e53e3e' }}
@@ -212,17 +310,14 @@ export default function PaperEditPage() {
           <div style={{
             background: neo.bg, boxShadow: neo.inset, borderRadius: 12,
             minHeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
-            position: 'relative',
           }}>
             {pageImages.length > 0 ? (
               <>
-                <img 
+                <img
                   src={`/api/papers/${paperId}/image/${currentPage}`}
                   alt={`Page ${currentPage + 1}`}
                   style={{ maxWidth: '100%', maxHeight: 500, borderRadius: 8 }}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none'
-                  }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                 />
                 {pageImages.length > 1 && (
                   <div style={{ display: 'flex', gap: 12, marginTop: 16, alignItems: 'center' }}>
@@ -234,9 +329,7 @@ export default function PaperEditPage() {
                         fontWeight: 600, fontSize: 12, background: neo.bg, boxShadow: currentPage === 0 ? 'none' : neo.btn,
                         color: currentPage === 0 ? neo.textSecondary : neo.accent, opacity: currentPage === 0 ? 0.5 : 1,
                       }}
-                    >
-                      ← Prev
-                    </button>
+                    >← Prev</button>
                     <span style={{ fontSize: 13, color: neo.textSecondary, fontWeight: 600 }}>
                       Page {currentPage + 1} / {pageImages.length}
                     </span>
@@ -249,9 +342,7 @@ export default function PaperEditPage() {
                         color: currentPage === pageImages.length - 1 ? neo.textSecondary : neo.accent,
                         opacity: currentPage === pageImages.length - 1 ? 0.5 : 1,
                       }}
-                    >
-                      Next →
-                    </button>
+                    >Next →</button>
                   </div>
                 )}
               </>
@@ -268,41 +359,86 @@ export default function PaperEditPage() {
         {/* Right: Questions */}
         <div style={{ background: neo.bg, boxShadow: neo.raised, borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 600, color: neo.textPrimary, margin: 0 }}>Extracted Questions</h2>
-            <span style={{ fontSize: 11, color: neo.textSecondary }}>Auto-saves on blur</span>
+            <h2 style={{ fontSize: 15, fontWeight: 600, color: neo.textPrimary, margin: 0 }}>
+              Extracted Questions
+              {isDirty && <span style={{ fontSize: 11, color: neo.warning, marginLeft: 8, fontWeight: 400 }}>● unsaved</span>}
+            </h2>
+            <button
+              id="add-question-btn"
+              onClick={handleAddQuestion}
+              disabled={isAddingQuestion}
+              style={{
+                padding: '5px 12px', borderRadius: 8, border: 'none',
+                cursor: isAddingQuestion ? 'not-allowed' : 'pointer',
+                fontWeight: 600, fontSize: 12, background: neo.bg,
+                boxShadow: neo.btn, color: neo.accent,
+                opacity: isAddingQuestion ? 0.6 : 1,
+              }}
+            >
+              {isAddingQuestion ? '…' : '+ Add Question'}
+            </button>
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', maxHeight: '55vh', display: 'flex', flexDirection: 'column', gap: 10, paddingRight: 4 }}>
             {questions.length === 0 ? (
               <p style={{ color: neo.textSecondary, textAlign: 'center', padding: '32px 0', fontSize: 14 }}>
-                No questions extracted
+                No questions — click "+ Add Question" to start
               </p>
-            ) : questions.map(q => (
+            ) : questions.map((q, index) => (
               <div
                 key={q.id}
-                style={{ background: neo.bg, boxShadow: neo.inset, borderRadius: 12, padding: 14 }}
+                draggable
+                onDragStart={() => onDragStart(index)}
+                onDragOver={e => onDragOver(e, index)}
+                onDrop={() => onDrop(index)}
+                onDragEnd={onDragEnd}
+                style={{
+                  background: neo.bg,
+                  boxShadow: dragOverIndex === index ? neo.raised : neo.inset,
+                  borderRadius: 12, padding: 14,
+                  opacity: dragIndex.current === index ? 0.4 : 1,
+                  transition: 'box-shadow 0.15s, opacity 0.15s',
+                }}
               >
-                {/* Question meta */}
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <span style={{
-                    fontFamily: 'monospace', fontSize: 11, padding: '2px 8px', borderRadius: 6,
-                    background: neo.bg, boxShadow: neo.raisedSm, color: neo.accent,
-                  }}>
-                    {q.qno}
-                  </span>
-                  <span style={{ fontSize: 11, color: neo.textSecondary }}>{q.marks} marks</span>
-                  {q.co && <span style={{ fontSize: 11, color: neo.textSecondary }}>{q.co}</span>}
-                  {q.isOr && (
-                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: neo.cellB, color: neo.cellBText, fontWeight: 600 }}>
-                      OR
-                    </span>
-                  )}
+                {/* Top row */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                  {/* Drag handle */}
+                  <span title="Drag to reorder" style={{ cursor: 'grab', fontSize: 14, color: neo.textSecondary, userSelect: 'none', flexShrink: 0 }}>⠿</span>
+
+                  {/* Editable qno */}
+                  <input
+                    value={q.qno}
+                    onChange={e => updateField(q.id, 'qno', e.target.value)}
+                    title="Question number"
+                    style={{
+                      fontFamily: 'monospace', fontSize: 11, padding: '2px 8px', borderRadius: 6,
+                      background: neo.bg, boxShadow: neo.insetSm, color: neo.accent,
+                      border: 'none', outline: 'none', width: 64, fontWeight: 700,
+                    }}
+                  />
+
                   {q.confidence < 65 && (
-                    <span style={{ fontSize: 11, color: neo.warning }}>⚠ Low confidence ({Math.round(q.confidence)}%)</span>
+                    <span style={{ fontSize: 11, color: neo.warning }}>⚠ low confidence</span>
                   )}
-                  {savingId === q.id && (
-                    <span style={{ fontSize: 11, color: neo.textSecondary }}>Saving…</span>
-                  )}
+
+                  <span style={{ flex: 1 }} />
+
+                  {/* Delete */}
+                  <button
+                    onClick={() => handleDeleteQuestion(q.id)}
+                    disabled={deletingId === q.id}
+                    title="Delete question"
+                    style={{
+                      width: 22, height: 22, borderRadius: 6, border: 'none',
+                      cursor: deletingId === q.id ? 'not-allowed' : 'pointer',
+                      background: neo.bg, boxShadow: neo.raisedSm,
+                      color: deletingId === q.id ? neo.textSecondary : '#e53e3e',
+                      fontSize: 12, fontWeight: 700, padding: 0, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    {deletingId === q.id ? '…' : '✕'}
+                  </button>
                 </div>
 
                 {/* Editable text */}
@@ -310,7 +446,6 @@ export default function PaperEditPage() {
                   value={q.text}
                   rows={3}
                   onChange={e => updateField(q.id, 'text', e.target.value)}
-                  onBlur={() => handleBlur(q)}
                   style={{
                     width: '100%', resize: 'none', border: 'none', outline: 'none',
                     background: neo.bg, boxShadow: neo.insetSm, borderRadius: 8,
@@ -322,15 +457,35 @@ export default function PaperEditPage() {
             ))}
           </div>
 
-          <button
-            onClick={handleVerify}
-            style={{
-              marginTop: 16, width: '100%', padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
-              fontWeight: 700, fontSize: 15, background: neo.accent, color: '#fff', boxShadow: neo.btn,
-            }}
-          >
-            All looks good →
-          </button>
+          {/* Action row */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button
+              id="save-changes-btn"
+              onClick={handleSaveAll}
+              disabled={isSaving || !isDirty}
+              style={{
+                flex: 1, padding: '12px 0', borderRadius: 12, border: 'none',
+                cursor: isSaving || !isDirty ? 'not-allowed' : 'pointer',
+                fontWeight: 700, fontSize: 14,
+                background: isDirty ? '#2D3748' : neo.bg,
+                color: isDirty ? '#fff' : neo.textSecondary,
+                boxShadow: neo.btn,
+                opacity: isSaving ? 0.6 : 1,
+                transition: 'background 0.2s, color 0.2s',
+              }}
+            >
+              {isSaving ? 'Saving…' : isDirty ? '💾 Save Changes' : 'No changes'}
+            </button>
+            <button
+              onClick={handleVerify}
+              style={{
+                flex: 2, padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                fontWeight: 700, fontSize: 14, background: neo.accent, color: '#fff', boxShadow: neo.btn,
+              }}
+            >
+              All looks good →
+            </button>
+          </div>
         </div>
       </div>
     </div>

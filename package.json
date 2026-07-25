@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -13,16 +13,17 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/pdf-parse": "^1.1.5",
     "@types/uuid": "^10.0.0",
+    "autoprefixer": "^10.4.20",
     "better-sqlite3": "^12.9.0",
     "canvas": "^3.2.3",
     "exceljs": "^4.4.0",
     "next": "16.2.4",
-    "onnxruntime-node": "^1.24.3",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
     "pdf2pic": "^3.2.0",
-    "pdfjs-dist": "^5.6.205",
-    "ppu-paddle-ocr": "^5.1.1",
+    "pdfjs-dist": "^3.11.174",
+    "postcss": "^8.5.1",
+    "ppu-paddle-ocr": "^5.8.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-dropzone": "^15.0.0",
@@ -40,7 +41,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
-    "tailwindcss": "^4",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5"
   }
 }

@@ -1,5 +1,5 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'gemma3:4b'
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'gemma3n:e4b'
 
 console.log('[Ollama] Config — base URL:', OLLAMA_BASE_URL, '| model:', DEFAULT_MODEL)
 
@@ -12,12 +12,9 @@ Your job is to extract all questions from raw OCR text and return ONLY a valid J
 const EXTRACTION_USER_PROMPT = `Extract all questions from this exam paper OCR text. Return ONLY a JSON array, nothing else.
 
 Rules:
-- Each question is an object with: qno, text, marks, co, isOr
+- Each question is an object with: qno, text
 - qno format: "1a", "1b", "2c" etc. Use the question number and letter as shown.
 - text: clean question text only. Remove marks like "(5)" and CO tags like "CO1". Fix obvious OCR typos (e.g. "Modei" → "Model", "Spirai" → "Spiral").
-- marks: integer. Extract from "(5)" or "5 marks" patterns. Use 0 if not found.
-- co: string like "CO1", "CO2". Use "" if not found.
-- isOr: true if this question appears after an "OR" separator, false otherwise.
 - If a question spans multiple lines, join them into one clean sentence.
 - Skip headers, instructions, institute name, seat number fields — extract only actual questions.
 - If "Solve any X out of Y" format, extract all Y options as separate questions.
@@ -29,37 +26,61 @@ OCR Text:
 
 Return only the JSON array. Example format:
 [
-  {"qno":"1a","text":"Define Software Engineering and list its characteristics.","marks":5,"co":"CO1","isOr":false},
-  {"qno":"1b","text":"Describe Software Engineering layers with a neat diagram.","marks":5,"co":"CO1","isOr":true}
+  {"qno":"1a","text":"Define Software Engineering and list its characteristics."},
+  {"qno":"1b","text":"Describe Software Engineering layers with a neat diagram."}
 ]`
 
-const CLASSIFICATION_SYSTEM_PROMPT = `You are an expert at analyzing engineering exam question papers. You compare questions to determine if they are repeated, similar, or new across different exam years.
+const CLASSIFICATION_PROMPT = `You are checking if ONE exam question from an upcoming paper matches content in ONE past paper. Follow these steps IN ORDER. Do not skip steps.
 
-You respond ONLY with a valid JSON object. No explanation, no markdown, no extra text.`
+STEP 1 — DIAGRAM CHECK (do this first, always):
+Does answering or judging this question require interpreting an ER diagram, image, or drawing (not just reading text)?
+If YES → answer is C. Stop here. Do not do Step 2 or 3.
+If NO → continue to Step 2.
 
-const CLASSIFICATION_USER_PROMPT = `Compare the BASE QUESTION against all questions in the PAST PAPER. Classify it as A, B, or C.
+STEP 2 — TOPIC CHECK:
+Read the PAST PAPER BLOCK below (all sub-questions from the same unit number).
+Does the core topic of the BASE QUESTION appear in ANY of those sub-questions — even if worded differently, split across two sub-questions, or combined with another topic?
+If the topic does NOT appear anywhere in the block → answer is C. Stop here.
+If the topic DOES appear → continue to Step 3.
 
-Classification rules:
-A = Exact or near-verbatim repeat. Same topic, same scope, same key terms. Minor wording changes are still A.
-B = Same concept or topic but differently framed. Different angle, different sub-parts, or partial overlap.
-C = No related question found. Completely different topic.
+STEP 3 — VERB/DEPTH CHECK:
+Look at the main instruction verb in the BASE QUESTION and in the matching PAST PAPER sub-question.
+Group A verbs (elaborate/explain in full): Explain, Describe, Illustrate, Define, Write short notes
+Group B verbs (pointwise/differentiate only): Compare, Differentiate, Classify
+Group C verbs (design/create/justify): Design, Construct, Justify
 
-Important:
-- Compare concept and topic, NOT question number or position
-- The base question can match ANY question in the past paper, not just the same number
-- If multiple past questions are similar, pick the closest match
-- For numerical/calculation questions: same formula/method = B, same formula + same given data = A
+If BASE QUESTION verb and the matching PAST PAPER verb are in the SAME group → answer is A.
+If they are in DIFFERENT groups, OR the past paper only covers PART of the base question's topic → answer is B.
 
-BASE QUESTION:
-"{{BASE_QUESTION_TEXT}}"
+OUTPUT exactly two lines, nothing else:
+ANSWER: [A/B/C]
+REASON: [one sentence, referencing which step decided it]
 
-PAST PAPER QUESTIONS:
-{{PAST_PAPER_QUESTIONS_LIST}}
+---
+EXAMPLE 1 (for reference — do not include in your answer):
+BASE QUESTION: "3.a) Explain normalization with 1NF, 2NF and 3NF with example"
+PAST PAPER BLOCK: "3.e) Explain 1NF and 2NF with suitable example\n3.f) Given a relation... determine if in 2NF"
+ANSWER: A
+REASON: Step 3 — topic (normalization) appears via 3.e, verb \"Explain\" matches Group A in both, so treated as full match even though 3NF isn't separately covered and it's a different sub-letter.
 
-Return ONLY this JSON:
-{"label":"A","confidence":0.92,"reasoning":"Brief one-line reason"}
+EXAMPLE 2 (for reference — do not include in your answer):
+BASE QUESTION: "3.e) Illustrate how many tables are required to represent the entity set and relationship set with their attributes"
+PAST PAPER BLOCK: "3.a) How many tables are required to represent the following Entity set and relationship set (diagram). Convert the given ER diagram into tables"
+ANSWER: C
+REASON: Step 1 — both questions require interpreting an ER diagram to judge equivalence, so this defaults to C regardless of topic similarity.
 
-Label must be exactly "A", "B", or "C". Confidence is 0.0 to 1.0.`
+EXAMPLE 3 (for reference — do not include in your answer):
+BASE QUESTION: "4.b) Differentiate between various NoSQL database types in terms of data model, applications, performance, scalability, and examples"
+PAST PAPER BLOCK: "4.b) Compare SQL with NoSQL\n4.c) Explain CRUD operations with syntax"
+ANSWER: C
+REASON: Step 2 — base question is about comparing NoSQL TYPES to each other, past paper only compares SQL vs NoSQL as a category, which is a different topic, not found in the block.
+---
+
+Now classify this one:
+
+BASE QUESTION: {baseQuestion}
+
+PAST PAPER BLOCK (same unit number, all sub-questions): {pastPaperUnitBlock}`
 
 const METADATA_SYSTEM_PROMPT = `You are an expert at extracting exam paper metadata. Return ONLY a valid JSON object, no other text.`
 
@@ -165,7 +186,9 @@ export async function checkOllamaHealth(): Promise<{
     console.log('[Ollama] Available models:', modelNames)
 
     const hasGemma = modelNames.some(n => n.includes('gemma'))
-    const visionModels = modelNames.filter(n => n.includes('llava') || n.includes('moondream'))
+    const visionModels = modelNames.filter(n =>
+      n.includes('llava') || n.includes('moondream') || n.includes('gemma4')
+    )
 
     console.log(`[Ollama] hasGemma=${hasGemma} | visionModels=${visionModels.join(', ') || 'none'}`)
     return { online: true, hasGemma, visionModels }
@@ -177,12 +200,17 @@ export async function checkOllamaHealth(): Promise<{
 
 export async function extractQuestionsFromOCR(
   rawText: string
-): Promise<Array<{ qno: string; text: string; marks: number; co: string; isOr: boolean }>> {
+): Promise<Array<{ qno: string; text: string }>> {
   console.log(`[Ollama] extractQuestionsFromOCR — input text length=${rawText.length}`)
   const prompt = EXTRACTION_USER_PROMPT.replace('{{RAW_OCR_TEXT}}', rawText)
   
-  // High token limit (8192) because exam papers can have many questions
-  const response = await callOllama(prompt, EXTRACTION_SYSTEM_PROMPT, DEFAULT_MODEL, 0.1, { num_predict: 8192 })
+  // num_ctx: set context window large enough for prompt + full question list output.
+  // Default num_ctx on small models is often 2048 — leaving only ~1000 tokens for output
+  // after the prompt, which truncates at ~Q3e. 8192 gives room for all 15+ questions.
+  const response = await callOllama(prompt, EXTRACTION_SYSTEM_PROMPT, DEFAULT_MODEL, 0.1, {
+    num_predict: 8192,
+    num_ctx: 8192,
+  })
 
   try {
     const parsed = JSON.parse(response)
@@ -231,46 +259,43 @@ export async function extractQuestionsFromOCR(
 }
 
 export async function classifyQuestion(
-  baseQuestionText: string,
-  pastPaperQuestions: Array<{ qno: string; text: string }>
-): Promise<{ label: 'A' | 'B' | 'C'; confidence: number; reasoning: string }> {
-  console.log(`[Ollama] classifyQuestion — base="${baseQuestionText.slice(0, 60)}…" | past_count=${pastPaperQuestions.length}`)
+  baseQuestion: string,
+  pastPaperUnitBlock: string,
+  comparisonPaperId: string = 'unknown'
+): Promise<{ answer: 'A' | 'B' | 'C'; confidence: number; reasoning: string; resolvedAtStep: number }> {
+  console.log(`[Classify] base="${baseQuestion.slice(0, 60)}…" | paperId=${comparisonPaperId}`)
 
-  const pastList = pastPaperQuestions
-    .map((q, i) => `${i + 1}. [${q.qno}] ${q.text}`)
-    .join('\n')
+  const prompt = CLASSIFICATION_PROMPT
+    .replace('{baseQuestion}', baseQuestion)
+    .replace('{pastPaperUnitBlock}', pastPaperUnitBlock)
 
-  const prompt = CLASSIFICATION_USER_PROMPT
-    .replace('{{BASE_QUESTION_TEXT}}', baseQuestionText)
-    .replace('{{PAST_PAPER_QUESTIONS_LIST}}', pastList)
+  const response = await callOllama(prompt, '', DEFAULT_MODEL, 0.15, {
+    num_predict: 120,
+    num_ctx: 4096,
+  })
 
-  const response = await callOllama(prompt, CLASSIFICATION_SYSTEM_PROMPT, DEFAULT_MODEL, 0.15, { num_predict: 128 })
+  // Parse ANSWER: X and REASON: ...
+  const answerMatch = response.match(/ANSWER:\s*([ABC])/i)
+  const reasonMatch = response.match(/REASON:\s*(.+)/i)
 
-  try {
-    const result = JSON.parse(response)
-    if (!['A', 'B', 'C'].includes(result.label)) {
-      console.warn('[Ollama] Invalid label in response:', result.label, '— raw:', response)
-      throw new Error('Invalid label')
-    }
-    console.log(`[Ollama] Classification result: label=${result.label} confidence=${result.confidence} reasoning="${result.reasoning}"`)
-    return result
-  } catch (parseErr) {
-    console.warn('[Ollama] Classification JSON.parse failed, trying regex fallback. Error:', parseErr)
-    const match = response.match(/\{[\s\S]*\}/)
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[0])
-        if (['A', 'B', 'C'].includes(parsed.label)) {
-          console.log(`[Ollama] Regex fallback classification: label=${parsed.label}`)
-          return parsed
-        }
-      } catch (e) {
-        console.warn('[Ollama] Regex fallback parse also failed:', e)
-      }
-    }
-    console.warn('[Ollama] All classification parse attempts failed — defaulting to C. Raw response:', response)
-    return { label: 'C', confidence: 0.0, reasoning: 'Parse error — manual review needed' }
+  const answer = (answerMatch ? answerMatch[1].toUpperCase() : 'C') as 'A' | 'B' | 'C'
+  const reasoning = reasonMatch ? reasonMatch[1].trim() : 'No reason extracted — manual review needed'
+
+  // Infer which step resolved it; warn if the model didn't name a step
+  const stepMatch = reasoning.match(/Step\s*(\d)/i)
+  const resolvedAtStep = stepMatch ? parseInt(stepMatch[1], 10) : 3
+  if (!stepMatch) {
+    console.warn(`[Classify] WARNING — reason does not mention a step number (model may not have followed format). Raw: ${response.slice(0, 200)}`)
   }
+  if (!answerMatch) {
+    console.warn(`[Classify] WARNING — could not parse ANSWER. Raw: ${response.slice(0, 200)}`)
+  }
+
+  const confidence = answer === 'A' ? 0.9 : answer === 'B' ? 0.6 : 0.3
+
+  console.log(`[Classify] ✓ paperId=${comparisonPaperId} | answer=${answer} | step=${resolvedAtStep} | reason="${reasoning}"`)
+
+  return { answer, confidence, reasoning, resolvedAtStep }
 }
 
 export async function extractMetadata(headerText: string): Promise<Record<string, unknown>> {

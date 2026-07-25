@@ -45,6 +45,17 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Extract the unit key from qno format:
+// Q1 / 1 -> "1"
+// Q2 / 2 -> "2"
+// Q3a..Q3f / 3a..3f -> "3"
+// Q4a..Q4f / 4a..4f -> "4"
+// Q5a..Q5f / 5a..5f -> "5"
+function extractUnit(qno: string): string {
+  const match = qno.match(/\d+/)
+  return match ? match[0] : '0'
+}
+
 async function processAnalysis(runId: string, basePaperId: string, comparisonPaperIds: string[]) {
   console.log(`\n[Analysis] ===== START runId=${runId} =====`)
   const db = getDb()
@@ -52,40 +63,84 @@ async function processAnalysis(runId: string, basePaperId: string, comparisonPap
   db.prepare("UPDATE analysis_runs SET status = 'classifying' WHERE id = ?").run(runId)
   console.log(`[Analysis] Status → classifying`)
 
-  const baseQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(basePaperId) as any[]
-  console.log(`[Analysis] Base questions loaded: ${baseQuestions.length}`)
+  const allBaseQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(basePaperId) as any[]
+  console.log(`[Analysis] Base questions loaded: ${allBaseQuestions.length}`)
 
+  // Group base questions by unit, preserving DB order within each unit
+  const baseUnitMap = new Map<string, any[]>()
+  for (const bq of allBaseQuestions) {
+    const unit = extractUnit(bq.qno)
+    if (!baseUnitMap.has(unit)) baseUnitMap.set(unit, [])
+    baseUnitMap.get(unit)!.push(bq)
+  }
+
+  // Pre-build unit→block string maps for every comparison paper
+  const compPaperUnitMaps = new Map<string, Map<string, string>>()
+  for (const paperId of comparisonPaperIds) {
+    const pastQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(paperId) as any[]
+    console.log(`[Analysis] Loaded comparison paper paperId=${paperId}: ${pastQuestions.length} questions`)
+    const unitMap = new Map<string, string>()
+    for (const pq of pastQuestions) {
+      const unit = extractUnit(pq.qno)
+      const existing = unitMap.get(unit) ?? ''
+      const entry = `${pq.qno}) ${pq.text}`
+      unitMap.set(unit, existing ? `${existing}\n${entry}` : entry)
+    }
+    compPaperUnitMaps.set(paperId, unitMap)
+    console.log(`[Analysis] Unit map for paperId=${paperId}: units=[${[...unitMap.keys()].join(', ')}]`)
+  }
+
+  // Sort units numerically so Q1 always processes before Q2, etc.
+  const sortedUnits = [...baseUnitMap.keys()].sort((a, b) => parseInt(a) - parseInt(b))
   let globalStep = 0
 
-  for (let pi = 0; pi < comparisonPaperIds.length; pi++) {
-    const paperId = comparisonPaperIds[pi]
-    const pastQuestions = db.prepare('SELECT * FROM questions WHERE paperId = ?').all(paperId) as any[]
-    console.log(`\n[Analysis] Comparing against paper ${pi + 1}/${comparisonPaperIds.length} — paperId=${paperId} (${pastQuestions.length} past questions)`)
+  // ── OUTER LOOP: unit ────────────────────────────────────────────────────────
+  for (const unit of sortedUnits) {
+    const unitBaseQuestions = baseUnitMap.get(unit)!
 
-    for (let qi = 0; qi < baseQuestions.length; qi++) {
-      const bq = baseQuestions[qi]
-      globalStep++
-
-      console.log(`[Analysis] Step ${globalStep} — classifying qno=${bq.qno} against paperId=${paperId}`)
-      db.prepare('UPDATE analysis_runs SET progress = ?, currentQuestion = ? WHERE id = ?')
-        .run(globalStep, bq.qno, runId)
-
-      const result = await classifyQuestion(
-        bq.text,
-        pastQuestions.map((q: any) => ({ qno: q.qno, text: q.text }))
-      )
-
-      console.log(`[Analysis] Step ${globalStep} result — label=${result.label} confidence=${result.confidence} reasoning="${result.reasoning}"`)
-
-      const classId = uuidv4()
-      db.prepare(`
-        INSERT INTO classifications (id, baseQuestionId, comparedPaperId, label, confidence, reasoning, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(classId, bq.id, paperId, result.label, result.confidence, result.reasoning, new Date().toISOString())
-
-      console.log(`[Analysis] Classification saved — id=${classId}`)
-      await sleep(200)
+    if (unitBaseQuestions.length === 0) {
+      console.log(`\n[Analysis] === Unit Q${unit} has no base sub-questions — skipping ===`)
+      continue
     }
+
+    console.log(`\n[Analysis] === Starting Unit Q${unit} (${unitBaseQuestions.length} sub-questions) ===`)
+
+    // ── MIDDLE LOOP: sub-question within unit ───────────────────────────────
+    for (const bq of unitBaseQuestions) {
+      const subResults: string[] = []
+
+      // ── INNER LOOP: comparison paper ──────────────────────────────────────
+      for (const paperId of comparisonPaperIds) {
+        globalStep++
+
+        const unitMap = compPaperUnitMaps.get(paperId)!
+        const unitBlock = unitMap.get(unit) ?? '[No questions found for this unit in this comparison paper]'
+
+        console.log(`[Analysis] Step ${globalStep} — qno=${bq.qno} vs paperId=${paperId}`)
+        console.log(`[Analysis]   base (60c): "${bq.text.slice(0, 60)}"`)
+        console.log(`[Analysis]   past block (${unitBlock.split('\n').length} lines): "${unitBlock.slice(0, 100).replace(/\n/g, ' | ')}"`)
+
+        db.prepare('UPDATE analysis_runs SET progress = ?, currentQuestion = ? WHERE id = ?')
+          .run(globalStep, bq.qno, runId)
+
+        const result = await classifyQuestion(bq.text, unitBlock, paperId)
+
+        const classId = uuidv4()
+        db.prepare(`
+          INSERT INTO classifications (id, baseQuestionId, comparedPaperId, label, confidence, reasoning, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(classId, bq.id, paperId, result.answer, result.confidence, result.reasoning, new Date().toISOString())
+
+        subResults.push(`${paperId.slice(0, 8)}:${result.answer}(step${result.resolvedAtStep})`)
+        await sleep(200)
+      }
+
+      console.log(`[Analysis]   ${bq.qno} done — ${subResults.join(', ')}`)
+    }
+
+    console.log(`[Analysis] === Finished Unit Q${unit} ===`)
+    // Breathing gap between units for the local model
+    await sleep(500)
   }
 
   db.prepare("UPDATE analysis_runs SET status = 'complete', completedAt = ? WHERE id = ?")

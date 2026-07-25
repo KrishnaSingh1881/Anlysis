@@ -4,9 +4,6 @@ export interface Question {
   paperId: string
   qno: string
   text: string
-  marks: number
-  co: string
-  isOr: boolean
   confidence: number
   createdAt: string
 }

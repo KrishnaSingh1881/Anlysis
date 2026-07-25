@@ -8,7 +8,7 @@ import { extractQuestionsFromOCR, sleep, checkOllamaHealth } from './ollama'
 const OCR_CONFIDENCE_THRESHOLD = parseInt(process.env.OCR_CONFIDENCE_THRESHOLD || '65')
 console.log('[Extraction] OCR_CONFIDENCE_THRESHOLD =', OCR_CONFIDENCE_THRESHOLD)
 
-type ExtractedQuestion = { qno: string; text: string; marks: number; co: string; isOr: boolean }
+type ExtractedQuestion = { qno: string; text: string }
 type PipelineResult = { questions: ExtractedQuestion[]; confidence: number }
 
 // ─── Level 1: pdf-parse direct text ──────────────────────────────────────────
@@ -40,13 +40,13 @@ async function level2FallbackPdfjs(pdfBuffer: Buffer, outputDir: string): Promis
       fs.mkdirSync(outputDir, { recursive: true })
     }
 
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js')
     const canvasModule = await import('canvas')
     const { createCanvas, Image } = canvasModule
-    
+
     // Point to the actual worker file
-    const pdfjsPath = require.resolve('pdfjs-dist/legacy/build/pdf.mjs')
-    const workerPath = pdfjsPath.replace('pdf.mjs', 'pdf.worker.mjs')
+    const pdfjsPath = require.resolve('pdfjs-dist/legacy/build/pdf.js')
+    const workerPath = pdfjsPath.replace('pdf.js', 'pdf.worker.js')
     pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`
 
     // Provide a NodeCanvasFactory so pdfjs can create canvases for embedded images
@@ -66,11 +66,11 @@ async function level2FallbackPdfjs(pdfBuffer: Buffer, outputDir: string): Promis
         canvasAndContext.context = null
       },
     }
-    
+
     // Convert Buffer to Uint8Array (pdfjs-dist requirement)
     const uint8Array = new Uint8Array(pdfBuffer)
-    
-    const loadingTask = pdfjsLib.getDocument({ 
+
+    const loadingTask = pdfjsLib.getDocument({
       data: uint8Array,
       useWorkerFetch: false,
       isEvalSupported: false,
@@ -87,15 +87,14 @@ async function level2FallbackPdfjs(pdfBuffer: Buffer, outputDir: string): Promis
       try {
         const page = await pdfDoc.getPage(pageNum)
         const viewport = page.getViewport({ scale: 2.5 })
-        
+
         const canvas = createCanvas(viewport.width, viewport.height)
         const context = canvas.getContext('2d')
 
         await page.render({
           canvasContext: context as any,
-          canvas: canvas as any,
           viewport: viewport,
-        }).promise
+        } as any).promise
 
         const imagePath = path.join(outputDir, `page-${pageNum}.png`)
         const buffer = canvas.toBuffer('image/png')
@@ -140,7 +139,7 @@ async function level2FallbackPdfLib(pdfBuffer: Buffer, outputDir: string): Promi
       fs.mkdirSync(outputDir, { recursive: true })
     }
 
-    const { PDFDocument } = await import('pdf-lib')
+    const { PDFDocument } = (await import('pdf-lib')) as any
     const pdfDoc = await PDFDocument.load(pdfBuffer)
     const numPages = pdfDoc.getPageCount()
     console.log(`[Extraction] Level 2 Fallback 2 — ${numPages} pages found`)
@@ -152,17 +151,17 @@ async function level2FallbackPdfLib(pdfBuffer: Buffer, outputDir: string): Promi
       const singlePageDoc = await PDFDocument.create()
       const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [i])
       singlePageDoc.addPage(copiedPage)
-      
+
       const singlePageBytes = await singlePageDoc.save()
-      
+
       // Try to use pdfjs-dist to render this single page
       try {
-        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js')
         const { createCanvas } = await import('canvas')
-        
+
         // Point to the actual worker file
-        const pdfjsPath = require.resolve('pdfjs-dist/legacy/build/pdf.mjs')
-        const workerPath = pdfjsPath.replace('pdf.mjs', 'pdf.worker.mjs')
+        const pdfjsPath = require.resolve('pdfjs-dist/legacy/build/pdf.js')
+        const workerPath = pdfjsPath.replace('pdf.js', 'pdf.worker.js')
         pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${workerPath}`
 
         const NodeCanvasFactory = {
@@ -179,11 +178,11 @@ async function level2FallbackPdfLib(pdfBuffer: Buffer, outputDir: string): Promi
             canvasAndContext.canvas.height = 0
           },
         }
-        
+
         // Convert to Uint8Array
         const uint8Array = new Uint8Array(singlePageBytes)
-        
-        const loadingTask = pdfjsLib.getDocument({ 
+
+        const loadingTask = pdfjsLib.getDocument({
           data: uint8Array,
           useWorkerFetch: false,
           isEvalSupported: false,
@@ -193,16 +192,15 @@ async function level2FallbackPdfLib(pdfBuffer: Buffer, outputDir: string): Promi
         const pdf = await loadingTask.promise
         const page = await pdf.getPage(1)
         const viewport = page.getViewport({ scale: 2.5 })
-        
+
         const canvas = createCanvas(viewport.width, viewport.height)
         const context = canvas.getContext('2d')
-        
+
         await page.render({
           canvasContext: context as any,
-          canvas: canvas as any,
           viewport: viewport,
-        }).promise
-        
+        } as any).promise
+
         const imagePath = path.join(outputDir, `page-${i + 1}.png`)
         const buffer = canvas.toBuffer('image/png')
         fs.writeFileSync(imagePath, buffer)
@@ -264,10 +262,10 @@ export async function level2ConvertToImages(
   pdfPath: string,
   outputDir: string
 ): Promise<string[]> {
-  const popplerBin = process.env.POPPLER_PATH || 
-    'C:\\Users\\KRISHNA SINGH\\AppData\\Local\\Microsoft\\WinGet\\Packages\\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\\poppler-25.07.0\\Library\\bin'
-  
-  const pdftoppm = path.join(popplerBin, 'pdftoppm.exe')
+  // On Linux, pdftoppm is a system command (install via: sudo apt install poppler-utils)
+  // On Windows/custom installs, set POPPLER_PATH env var to the bin directory
+  const popplerBin = process.env.POPPLER_PATH
+  const pdftoppm = popplerBin ? path.join(popplerBin, 'pdftoppm') : 'pdftoppm'
   const outputPrefix = path.join(outputDir, 'page')
 
   // Convert PDF pages to PNG images at 150 DPI

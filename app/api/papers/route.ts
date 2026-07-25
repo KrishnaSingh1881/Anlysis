@@ -55,12 +55,12 @@ export async function POST(request: NextRequest) {
     // Insert questions
     if (questions.length > 0) {
       const stmt = db.prepare(`
-        INSERT INTO questions (id, paperId, qno, text, marks, co, isOr, confidence, createdAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO questions (id, paperId, qno, text, confidence, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
       for (const q of questions) {
-        stmt.run(uuidv4(), paperId, q.qno, q.text, q.marks, q.co, q.isOr ? 1 : 0, confidence, now)
-        console.log(`[API /papers]   → inserted qno=${q.qno} marks=${q.marks} co=${q.co}`)
+        stmt.run(uuidv4(), paperId, q.qno, q.text, confidence, now)
+        console.log(`[API /papers]   → inserted qno=${q.qno}`)
       }
     } else {
       console.warn('[API /papers] No questions extracted — paper saved for manual entry')
